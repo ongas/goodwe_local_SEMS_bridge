@@ -6,7 +6,8 @@
         "description": "Select the GoodWe integration to sync with SEMS",
         "data": {
           "goodwe_entry_id": "GoodWe Integration"
-        }
+        },
+        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md"
       },
       "sems_credentials": {
         "title": "SEMS API Credentials",
@@ -15,7 +16,8 @@
           "username": "SEMS Username",
           "password": "SEMS Password",
           "sems_station_id": "SEMS Station ID"
-        }
+        },
+        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
       }
     },
     "abort": {
