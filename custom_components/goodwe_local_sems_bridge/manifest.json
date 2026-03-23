@@ -4,9 +4,9 @@
   "codeowners": [],
   "config_flow": true,
   "dependencies": ["goodwe"],
-  "documentation": "https://github.com/home-assistant/core/blob/dev/homeassistant/components/goodwe_local_sems_bridge/README.md",
+  "documentation": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md",
   "iot_class": "local_polling",
-  "issues": "https://github.com/home-assistant/core/issues",
+  "issues": "https://github.com/ongas/goodwe_local_SEMS_bridge/issues",
   "requirements": [],
   "version": "1.0.0"
 }
