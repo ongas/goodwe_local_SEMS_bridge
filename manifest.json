@@ -1,0 +1,12 @@
+{
+  "domain": "goodwe_local_sems_bridge",
+  "name": "GoodWe Local SEMS Bridge",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["goodwe"],
+  "documentation": "https://github.com/home-assistant/core/blob/dev/homeassistant/components/goodwe_local_sems_bridge/README.md",
+  "iot_class": "local_polling",
+  "issues": "https://github.com/home-assistant/core/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

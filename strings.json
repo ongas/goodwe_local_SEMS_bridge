@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "GoodWe Local SEMS Bridge",
+        "description": "Select the GoodWe integration to sync with SEMS",
+        "data": {
+          "goodwe_entry_id": "GoodWe Integration"
+        }
+      },
+      "sems_credentials": {
+        "title": "SEMS API Credentials",
+        "description": "Enter your SEMS API credentials",
+        "data": {
+          "username": "SEMS Username",
+          "password": "SEMS Password",
+          "sems_station_id": "SEMS Station ID"
+        }
+      }
+    },
+    "abort": {
+      "no_goodwe_integration": "No GoodWe integration found. Please set up the GoodWe integration first."
+    }
+  },
+  "error": {
+    "sems_auth_failed": "Failed to authenticate with SEMS API. Please check your credentials."
+  }
+}
