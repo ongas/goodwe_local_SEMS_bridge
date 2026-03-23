@@ -1,7 +1,9 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
+
+# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -21,15 +23,42 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-.pytest_cache/
+
+# Unit test / coverage reports
 htmlcov/
+.tox/
+.nox/
 .coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Tools
 .ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Virtual environments
 .venv/
 venv/
+ENV/
+env/
+.env
+
+# IDEs
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
 .DS_Store
+
+# Git
+.git/
+
