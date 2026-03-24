@@ -18,6 +18,17 @@
           "sems_station_id": "SEMS Station ID"
         },
         "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
+      },
+      "sync_settings": {
+        "title": "Cloud Sync Settings",
+        "description": "Enable or disable cloud synchronization",
+        "data": {
+          "sync_to_cloud": "Sync to Goodwe Cloud"
+        },
+        "data_description": {
+          "sync_to_cloud": "Enable syncing data to Goodwe SEMS cloud at the factory default 60-second interval."
+        },
+        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
       }
     },
     "abort": {

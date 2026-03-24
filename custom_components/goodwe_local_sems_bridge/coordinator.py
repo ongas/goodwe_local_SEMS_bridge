@@ -14,8 +14,8 @@ _LOGGER = logging.getLogger(__name__)
 class GoodweLocalSemsRelay:
     """Simple relay that syncs Goodwe data to SEMS API.
     
-    Reads data from the official Goodwe integration and syncs to SEMS API
-    once per minute (regardless of local read frequency).
+    Reads data from the official Goodwe integration and optionally syncs to SEMS API.
+    If sync to cloud is enabled, syncs once per minute.
     """
 
     def __init__(
@@ -25,6 +25,7 @@ class GoodweLocalSemsRelay:
         sems_username: str,
         sems_password: str,
         sems_station_id: str,
+        sync_to_cloud: bool = True,
     ) -> None:
         """Initialize the relay."""
         self.hass = hass
@@ -32,13 +33,15 @@ class GoodweLocalSemsRelay:
         self.sems_username = sems_username
         self.sems_password = sems_password
         self.sems_station_id = sems_station_id
+        self.sync_to_cloud = sync_to_cloud
         
         self._sems_api: Any = None
         self._last_sems_sync: datetime | None = None
         self._sems_sync_failed = False
         
-        # Initialize SEMS API
-        self._init_sems_api()
+        # Initialize SEMS API only if sync to cloud is enabled
+        if self.sync_to_cloud:
+            self._init_sems_api()
 
     def _init_sems_api(self) -> None:
         """Initialize the SEMS API client."""
@@ -66,7 +69,11 @@ class GoodweLocalSemsRelay:
         """Sync latest Goodwe data to SEMS.
         
         Returns True if sync succeeded, False otherwise.
+        If sync_to_cloud is disabled, returns True without syncing.
         """
+        if not self.sync_to_cloud:
+            return True
+        
         if not self._sems_api:
             if not self._sems_sync_failed:
                 # First-time failure, try to reinitialize

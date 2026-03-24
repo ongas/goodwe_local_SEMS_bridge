@@ -37,29 +37,33 @@ This integration solves a common issue with GoodWe inverters:
 
 ## Setup
 
-1. In Home Assistant, go to **Settings → Devices & Services → Create Automation**
-2. Click **"Create Integration"**
-3. Search for **"GoodWe Local SEMS Bridge"**
-4. Select your configured GoodWe integration
-5. Enter your SEMS API credentials:
+1. In Home Assistant, go to **Settings → Devices & Services → Create Integration**
+2. Click **"Create Integration"** (or search for "GoodWe Local SEMS Bridge")
+3. Select your configured GoodWe integration
+4. Enter your SEMS API credentials:
    - SEMS Username
    - SEMS Password
    - SEMS Station ID
+5. Choose whether to enable cloud sync:
+   - **Sync to Goodwe Cloud**: Enable/disable syncing to SEMS (default: enabled)
 
 ## How It Works
 
-1. **Initial Setup**: Bridge verifies SEMS credentials are valid
-2. **Continuous Operation**: Every 60 seconds, the bridge:
+1. **Initial Setup**: Bridge verifies SEMS credentials are valid (if cloud sync enabled)
+2. **Continuous Operation**: 
    - Reads the latest data from your configured GoodWe modbus integration
-   - Syncs that data to your Goodwe SEMS cloud account
+   - If cloud sync is enabled: Syncs data to Goodwe SEMS cloud every 60 seconds (factory default)
+   - If cloud sync is disabled: Data is only available locally
 3. **Error Handling**: If SEMS sync fails, it logs the error but continues operating
 
 ## Configuration
 
-The integration requires **no additional configuration** after setup. It automatically:
-- Syncs once per minute (fixed, non-configurable)
-- Uses the data frequency from your official GoodWe integration configuration
-- Gracefully handles SEMS API failures
+The integration is configured through the setup wizard and no additional manual configuration is needed:
+
+- **Sync to Goodwe Cloud** (default: enabled): 
+  - When enabled, data is automatically synced to SEMS every 60 seconds (factory default frequency)
+  - When disabled, no cloud sync occurs
+  - The bridge reads data from your official GoodWe integration at its configured frequency and syncs to cloud on the 60-second schedule
 
 ## Troubleshooting
 

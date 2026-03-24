@@ -13,6 +13,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from .const import (
     CONF_GOODWE_ENTRY_ID,
     CONF_SEMS_STATION_ID,
+    CONF_SYNC_TO_CLOUD,
     DOMAIN,
     PLATFORMS,
     SEMS_SYNC_INTERVAL,
@@ -35,29 +36,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady("Goodwe integration not found")
 
     # Create the relay
+    sync_to_cloud = entry.data.get(CONF_SYNC_TO_CLOUD, True)
     relay = GoodweLocalSemsRelay(
         hass=hass,
         goodwe_entry_id=goodwe_entry_id,
         sems_username=entry.data.get(CONF_USERNAME),
         sems_password=entry.data.get(CONF_PASSWORD),
         sems_station_id=entry.data.get(CONF_SEMS_STATION_ID),
+        sync_to_cloud=sync_to_cloud,
     )
 
-    # Test initial sync
-    if not await relay.async_sync():
-        _LOGGER.warning("Initial SEMS sync failed, but entry will continue to retry")
-
-    # Set up periodic syncing (once per minute)
+    # Test initial sync if cloud sync is enabled
+    if sync_to_cloud:
+        if not await relay.async_sync():
+            _LOGGER.warning("Initial SEMS sync failed, but entry will continue to retry")
+    
+    # Set up periodic cloud syncing (once per minute) if enabled
     async def sync_callback(now):
         """Sync data to SEMS periodically."""
         await relay.async_sync()
 
-    # Store the relay and remove callback function
+    # Store the relay
     hass.data[DOMAIN][entry.entry_id] = relay
-    remove_listener = async_track_time_interval(
-        hass, sync_callback, SEMS_SYNC_INTERVAL
-    )
-    hass.data[DOMAIN][f"{entry.entry_id}_listener"] = remove_listener
+    
+    # Only set up cloud sync listener if sync to cloud is enabled
+    if sync_to_cloud:
+        remove_listener = async_track_time_interval(
+            hass, sync_callback, SEMS_SYNC_INTERVAL
+        )
+        hass.data[DOMAIN][f"{entry.entry_id}_listener"] = remove_listener
+        _LOGGER.info(
+            "GoodWe Local SEMS Bridge configured: cloud_sync=enabled (60s factory default)"
+        )
+    else:
+        hass.data[DOMAIN][f"{entry.entry_id}_listener"] = None
+        _LOGGER.info(
+            "GoodWe Local SEMS Bridge configured: cloud_sync=disabled"
+        )
 
     # Set up platforms (should be empty list, but Home Assistant expects it)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
