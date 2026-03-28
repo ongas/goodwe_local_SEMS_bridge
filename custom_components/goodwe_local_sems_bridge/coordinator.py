@@ -259,9 +259,9 @@ class GoodweLocalSemsRelay:
                 )
                 return None
 
-            goodwe_runtime_data = getattr(goodwe_entry, "runtime_data", None)
-
-            if not goodwe_runtime_data:
+            try:
+                goodwe_coordinator = goodwe_entry.runtime_data.coordinator
+            except (AttributeError, RuntimeError):
                 _LOGGER.warning(
                     "Goodwe entry '%s' (%s) has no runtime data yet - "
                     "it may still be loading or failed to connect to the inverter (state: %s)",
@@ -270,8 +270,6 @@ class GoodweLocalSemsRelay:
                     goodwe_entry.state,
                 )
                 return None
-
-            goodwe_coordinator = goodwe_runtime_data.coordinator
 
             if goodwe_coordinator.data is None:
                 _LOGGER.debug("No data from Goodwe coordinator yet")
