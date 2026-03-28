@@ -11,9 +11,14 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
+    CONF_AA55_PROXY_ENABLED,
+    CONF_AA55_PROXY_PORT,
+    CONF_DEVICE_ID,
+    CONF_DEVICE_SERIAL,
     CONF_GOODWE_ENTRY_ID,
     CONF_SEMS_STATION_ID,
     CONF_SYNC_TO_CLOUD,
+    DEFAULT_AA55_PROXY_PORT,
     DOMAIN,
     PLATFORMS,
     SEMS_SYNC_INTERVAL,
@@ -35,7 +40,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not any(e.entry_id == goodwe_entry_id for e in goodwe_entries):
         raise ConfigEntryNotReady("Goodwe integration not found")
 
-    # Create the relay
     sync_to_cloud = entry.data.get(CONF_SYNC_TO_CLOUD, True)
     relay = GoodweLocalSemsRelay(
         hass=hass,
@@ -43,38 +47,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         sems_username=entry.data.get(CONF_USERNAME),
         sems_password=entry.data.get(CONF_PASSWORD),
         sems_station_id=entry.data.get(CONF_SEMS_STATION_ID),
+        device_id=entry.data.get(CONF_DEVICE_ID, "REDACTED_DEVICE_ID"),
+        device_serial=entry.data.get(CONF_DEVICE_SERIAL, "REDACTED_SERIAL"),
         sync_to_cloud=sync_to_cloud,
     )
 
     # Test initial sync if cloud sync is enabled
     if sync_to_cloud:
         if not await relay.async_sync():
-            _LOGGER.warning("Initial SEMS sync failed, but entry will continue to retry")
+            _LOGGER.info("Initial SEMS sync in progress, will continue retrying")
     
-    # Set up periodic cloud syncing (once per minute) if enabled
     async def sync_callback(now):
         """Sync data to SEMS periodically."""
         await relay.async_sync()
 
-    # Store the relay
     hass.data[DOMAIN][entry.entry_id] = relay
     
-    # Only set up cloud sync listener if sync to cloud is enabled
     if sync_to_cloud:
         remove_listener = async_track_time_interval(
             hass, sync_callback, SEMS_SYNC_INTERVAL
         )
         hass.data[DOMAIN][f"{entry.entry_id}_listener"] = remove_listener
         _LOGGER.info(
-            "GoodWe Local SEMS Bridge configured: cloud_sync=enabled (60s factory default)"
+            "GoodWe Local SEMS Bridge configured with Goodwe entry %s - cloud sync enabled (60s interval)",
+            goodwe_entry_id,
         )
     else:
         hass.data[DOMAIN][f"{entry.entry_id}_listener"] = None
         _LOGGER.info(
-            "GoodWe Local SEMS Bridge configured: cloud_sync=disabled"
+            "GoodWe Local SEMS Bridge configured - cloud sync disabled"
         )
 
-    # Set up platforms (should be empty list, but Home Assistant expects it)
+    # Set up AA55 MITM proxy if enabled
+    aa55_proxy_enabled = entry.data.get(CONF_AA55_PROXY_ENABLED, False)
+    if aa55_proxy_enabled:
+        _LOGGER.warning(
+            "AA55 MITM Proxy is configured but not yet implemented. "
+            "Will relay Goodwe data via POSTGW protocol instead."
+        )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
@@ -82,15 +93,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Remove the periodic sync listener
     remove_listener = hass.data[DOMAIN].pop(f"{entry.entry_id}_listener", None)
     if remove_listener:
         remove_listener()
 
-    # Remove the relay
     hass.data[DOMAIN].pop(entry.entry_id, None)
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     return unload_ok
-

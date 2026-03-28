@@ -11,7 +11,7 @@
       },
       "sems_credentials": {
         "title": "SEMS API Credentials",
-        "description": "Enter your SEMS API credentials",
+        "description": "Enter your SEMS account credentials (used for reference only, not required for data relay)",
         "data": {
           "username": "SEMS Username",
           "password": "SEMS Password",
@@ -21,21 +21,32 @@
       },
       "sync_settings": {
         "title": "Cloud Sync Settings",
-        "description": "Enable or disable cloud synchronization",
+        "description": "Enable or disable cloud synchronization to SEMS",
         "data": {
-          "sync_to_cloud": "Sync to Goodwe Cloud"
+          "sync_to_cloud": "Sync to Goodwe Cloud SEMS"
         },
         "data_description": {
-          "sync_to_cloud": "Enable syncing data to Goodwe SEMS cloud at the factory default 60-second interval."
+          "sync_to_cloud": "Enable syncing inverter data to Goodwe SEMS cloud at 60-second intervals using POSTGW protocol"
         },
         "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
+      },
+      "aa55_settings": {
+        "title": "AA55 MITM Proxy (Optional)",
+        "description": "Configure optional local AA55 protocol interception (advanced feature)",
+        "data": {
+          "aa55_proxy_enabled": "Enable AA55 MITM Proxy",
+          "aa55_proxy_port": "AA55 Proxy Port"
+        },
+        "data_description": {
+          "aa55_proxy_enabled": "Enable local MITM proxy to intercept inverter packets (requires network configuration)",
+          "aa55_proxy_port": "TCP port for AA55 MITM proxy listener (default: 20001)"
+        },
+        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#aa55-mitm-proxy"
       }
     },
     "abort": {
       "no_goodwe_integration": "No GoodWe integration found. Please set up the GoodWe integration first."
     }
   },
-  "error": {
-    "sems_auth_failed": "Failed to authenticate with SEMS API. Please check your credentials."
-  }
+  "error": {}
 }

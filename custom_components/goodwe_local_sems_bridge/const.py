@@ -14,5 +14,11 @@ CONF_GOODWE_ENTRY_ID = "goodwe_entry_id"
 CONF_SEMS_USERNAME = "sems_username"
 CONF_SEMS_PASSWORD = "sems_password"
 CONF_SEMS_STATION_ID = "sems_station_id"
+CONF_DEVICE_ID = "device_id"
+CONF_DEVICE_SERIAL = "device_serial"
 CONF_SYNC_TO_CLOUD = "sync_to_cloud"
+CONF_AA55_PROXY_ENABLED = "aa55_proxy_enabled"
+CONF_AA55_PROXY_PORT = "aa55_proxy_port"
+
+DEFAULT_AA55_PROXY_PORT = 20001  # Standard POSTGW port
 
