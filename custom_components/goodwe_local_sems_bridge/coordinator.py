@@ -67,8 +67,8 @@ class POSTGWPacketBuilder:
 
     def __init__(
         self,
-        device_id: str = "REDACTED_DEVICE_ID",
-        device_serial: str = "REDACTED_SERIAL",
+        device_id: str,
+        device_serial: str,
     ) -> None:
         self.device_id = device_id
         self.device_serial = device_serial
@@ -175,8 +175,8 @@ class GoodweLocalSemsRelay:
         sems_username: str,
         sems_password: str,
         sems_station_id: str,
-        device_id: str = "REDACTED_DEVICE_ID",
-        device_serial: str = "REDACTED_SERIAL",
+        device_id: str,
+        device_serial: str,
         sync_to_cloud: bool = True,
     ) -> None:
         """Initialize the relay."""

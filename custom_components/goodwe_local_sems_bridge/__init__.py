@@ -47,8 +47,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         sems_username=entry.data.get(CONF_USERNAME),
         sems_password=entry.data.get(CONF_PASSWORD),
         sems_station_id=entry.data.get(CONF_SEMS_STATION_ID),
-        device_id=entry.data.get(CONF_DEVICE_ID, "REDACTED_DEVICE_ID"),
-        device_serial=entry.data.get(CONF_DEVICE_SERIAL, "REDACTED_SERIAL"),
+        device_id=entry.data.get(CONF_DEVICE_ID),
+        device_serial=entry.data.get(CONF_DEVICE_SERIAL),
         sync_to_cloud=sync_to_cloud,
     )
 
