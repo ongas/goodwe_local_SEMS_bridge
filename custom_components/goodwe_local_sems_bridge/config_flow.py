@@ -267,7 +267,7 @@ class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_select_inverter()
 
         station_options = {
-            s["id"]: f"{s.get('name', s['id'])} ({s['id']})"
+            s["id"]: s.get("name", s["id"])
             for s in self._stations
         }
         first_station_id = self._stations[0]["id"] if self._stations else None
@@ -306,7 +306,7 @@ class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_sync_settings()
 
         inverter_options = {
-            i["sn"]: i["name"]
+            i["sn"]: f"{i['name']} (SN: {i['sn']})"
             for i in self._inverters
         }
         first_inv = self._inverters[0] if self._inverters else None
