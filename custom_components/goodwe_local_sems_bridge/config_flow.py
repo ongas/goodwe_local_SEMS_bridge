@@ -30,13 +30,16 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 SEMS_LOGIN_URL = "https://www.semsportal.com/api/v2/Common/CrossLogin"
-SEMS_STATION_LIST_URL = "https://www.semsportal.com/api/v3/PowerStation/GetStationList"
-SEMS_MONITOR_URL = "https://www.semsportal.com/api/v3/PowerStation/GetMonitorDetailByPowerstationId"
+SEMS_STATION_BY_OWNER_PART = "/PowerStation/GetPowerStationIdByOwner"
+SEMS_MONITOR_PART = "/v3/PowerStation/GetMonitorDetailByPowerstationId"
 SEMS_BASE_TOKEN = json.dumps({"version": "", "client": "ios", "language": "en"})
 
 
 async def _sems_fetch_stations(hass: HomeAssistant, username: str, password: str) -> tuple[dict | None, list | None, str | None]:
-    """Authenticate to SEMS and return (token_data, stations, error_key)."""
+    """Authenticate to SEMS and return (token_data, stations, error_key).
+
+    Each station dict has 'id' (UUID) and 'name' keys.
+    """
     session = async_get_clientsession(hass)
 
     # Step 1: Authenticate — send as raw string body (SEMS API requires this format)
@@ -59,10 +62,15 @@ async def _sems_fetch_stations(hass: HomeAssistant, username: str, password: str
     if not isinstance(token_data, dict):
         return None, None, "invalid_auth"
 
-    # Step 2: Fetch station list — GET with full token_data in header
+    # Store the dynamic API base URL returned by login — required for all subsequent calls
+    api_base = data.get("api") or "https://www.semsportal.com/api"
+    token_data["api"] = api_base
+
+    # Step 2: Fetch station IDs via GetPowerStationIdByOwner (POST, uses dynamic base URL)
+    station_url = api_base + SEMS_STATION_BY_OWNER_PART
     try:
-        resp = await session.get(
-            SEMS_STATION_LIST_URL,
+        resp = await session.post(
+            station_url,
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
@@ -75,11 +83,27 @@ async def _sems_fetch_stations(hass: HomeAssistant, username: str, password: str
         return token_data, None, "cannot_fetch_stations"
 
     if ps_data.get("code") not in (0, "0"):
+        _LOGGER.warning("SEMS GetPowerStationIdByOwner failed: code=%s msg=%s", ps_data.get("code"), ps_data.get("msg"))
         return token_data, None, "cannot_fetch_stations"
 
-    stations = ps_data.get("data", [])
-    if isinstance(stations, dict):
-        stations = [stations]
+    raw = ps_data.get("data")
+    # API returns a single UUID string, a list of UUID strings, or a list of dicts
+    if isinstance(raw, str) and raw:
+        stations = [{"id": raw, "name": raw}]
+    elif isinstance(raw, list) and raw:
+        stations = []
+        for item in raw:
+            if isinstance(item, str):
+                stations.append({"id": item, "name": item})
+            elif isinstance(item, dict):
+                sid = item.get("id") or item.get("powerstation_id") or item.get("stationId", "")
+                sname = item.get("name") or item.get("stationName") or sid
+                stations.append({"id": sid, "name": sname})
+    else:
+        return token_data, None, "no_stations"
+
+    if not stations:
+        return token_data, None, "no_stations"
 
     return token_data, stations, None
 
@@ -90,9 +114,12 @@ async def _sems_fetch_inverters(hass: HomeAssistant, token_data: dict, station_i
     Each inverter dict will have 'sn' (16-char), 'device_id' (first 8), 'device_serial' (last 8).
     """
     session = async_get_clientsession(hass)
+    # Use the dynamic API base URL stored during login
+    api_base = token_data.get("api") or "https://www.semsportal.com/api"
+    monitor_url = api_base + SEMS_MONITOR_PART
     try:
         resp = await session.post(
-            SEMS_MONITOR_URL,
+            monitor_url,
             json={"powerStationId": station_id},
             headers={
                 "Content-Type": "application/json",
