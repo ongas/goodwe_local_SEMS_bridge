@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
+from homeassistant.components.sensor import RestoreSensor, SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
@@ -26,7 +26,7 @@ async def async_setup_entry(
         SemsSyncStatusSensor(relay, entry),
         SemsSyncLastTimeSensor(relay, entry),
         SemsSyncCountSensor(relay, entry),
-    ])
+    ], True)
 
 
 def _device_info(entry: ConfigEntry) -> DeviceInfo:
@@ -89,8 +89,8 @@ class SemsSyncLastTimeSensor(SensorEntity):
         return self._relay._last_sems_sync
 
 
-class SemsSyncCountSensor(SensorEntity):
-    """Reports the total number of successful syncs since last restart."""
+class SemsSyncCountSensor(RestoreSensor):
+    """Reports the total number of successful syncs, persisted across restarts."""
 
     _attr_has_entity_name = True
     _attr_name = "Sync Count"
@@ -102,6 +102,15 @@ class SemsSyncCountSensor(SensorEntity):
         self._relay = relay
         self._attr_unique_id = f"{entry.entry_id}_sync_count"
         self._attr_device_info = _device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore previous sync count so the total survives HA restarts."""
+        if (last_state := await self.async_get_last_sensor_data()) is not None:
+            try:
+                restored = int(last_state.native_value)
+                self._relay._sync_count = restored
+            except (TypeError, ValueError):
+                pass
 
     @property
     def native_value(self) -> int:
