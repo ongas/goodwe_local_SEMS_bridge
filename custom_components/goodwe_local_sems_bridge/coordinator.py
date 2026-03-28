@@ -4,19 +4,24 @@ Architecture
 ------------
 1. Connect to the inverter directly via the ``goodwe`` Python library.
 2. Every sync cycle, call ``inverter._read_from_socket(_READ_RUNNING_DATA)``
-   to obtain the *raw* 250-byte trimmed modbus response.
+   to obtain the raw trimmed modbus response.
 3. Construct the 240-byte POSTGW plaintext:
-       plaintext = device_header_21bytes + raw_response[:219]
-   The 21-byte device header is constant per inverter firmware and was
+       plaintext = device_header(21) + modbus_data(219)
+   The 21-byte device header is a constant per inverter firmware version,
    captured once during config-flow setup.
 4. Update the 6-byte embedded timestamp at plaintext[0x15:0x1B] to now
    (local time, matching what the inverter firmware embeds).
 5. Build the 294-byte POSTGW packet (AES-128-CBC + CRC-16 Modbus) and
    send it to tcp.goodwe-power.com:20001.
 
-This mirrors exactly what ``submit_synthetic_loop.py`` does — use a real
-captured plaintext, only update the timestamp — except we obtain the
-plaintext from a live modbus query instead of from a file on disk.
+DT-family plaintext size (confirmed):
+  DT inverters (e.g. GW25K-MT) return 146 bytes (73 registers × 2) from
+  _READ_RUNNING_DATA (register 0x7594, count 0x49). The 240-byte POSTGW
+  plaintext requires 219 bytes of modbus data, so the final 73 bytes are
+  zero-padded. SEMS ignores these trailing bytes — confirmed by A/B test
+  (March 2026): a zero-padded packet and a full-data packet were both
+  accepted identically. GoodWe inverters of other families (e.g. DNS G3 /
+  ET series) send larger plaintexts using the same protocol wrapper.
 """
 
 from __future__ import annotations
@@ -46,10 +51,19 @@ POSTGW_HEADER = b"POSTGW"
 POSTGW_PACKET_TYPE = 0x0104
 POSTGW_ENCRYPTION_KEY = bytes([0xFF] * 16)
 
-# Plaintext is 240 bytes = 21-byte device header + 219 bytes of modbus data
+# DT-family POSTGW plaintext layout (240 bytes, confirmed from MITM captures):
+#   [0x00:0x15]  21 bytes  device header (constant per firmware, not readable via modbus)
+#   [0x15:0x1B]   6 bytes  embedded timestamp (YY MM DD HH mm ss, local time)
+#   [0x1B:0xEF] 213 bytes  modbus sensor data (registers 0x7596+)
+#   Total plaintext           = 240 bytes = 15 × 16 (AES block size)
+#
+# DT inverters return 146 bytes (73 registers × 2) from _READ_RUNNING_DATA.
+# The remaining 73 bytes (plaintext[167:240]) are zero-padded — confirmed safe
+# by A/B test March 2026: SEMS accepts and displays zero-padded packets
+# identically to full-data packets.
 POSTGW_PLAINTEXT_SIZE = 240
-DEVICE_HEADER_SIZE = 21       # bytes 0x00–0x14
-MODBUS_DATA_SIZE = 219        # bytes 0x15–0xEF
+DEVICE_HEADER_SIZE = 21       # bytes 0x00–0x14: firmware constant, 21 bytes
+MODBUS_DATA_SIZE = 219        # bytes 0x15–0xEF: 146 real (DT) + 73 zero-padded
 TIMESTAMP_OFFSET = 0x15       # 6-byte timestamp inside plaintext
 TIMESTAMP_SIZE = 6
 
@@ -252,10 +266,12 @@ class GoodweLocalSemsRelay:
                 if len(raw) < 10:
                     _LOGGER.warning("Running data response too short: %d bytes", len(raw))
                     return None
-                # Pad to MODBUS_DATA_SIZE with zeros if inverter returns fewer bytes (DT = 146 bytes)
+                        # DT inverters return 146 bytes (73 registers); zero-pad to 219.
+                # The trailing 73 bytes are structurally unused by SEMS for DT hardware —
+                # confirmed safe by A/B test (March 2026).
                 if len(raw) < MODBUS_DATA_SIZE:
                     _LOGGER.debug(
-                        "Padding modbus response from %d to %d bytes",
+                        "Padding modbus response from %d to %d bytes (DT normal)",
                         len(raw), MODBUS_DATA_SIZE,
                     )
                     raw = raw + bytes(MODBUS_DATA_SIZE - len(raw))
