@@ -5,16 +5,18 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
+    CONF_DEVICE_HEADER,
     CONF_DEVICE_ID,
     CONF_DEVICE_SERIAL,
-    CONF_GOODWE_ENTRY_ID,
-    CONF_SEMS_STATION_ID,
+    CONF_INVERTER_HOST,
+    CONF_INVERTER_PORT,
+    CONF_MODEL_FAMILY,
+    DEFAULT_INVERTER_PORT,
     DOMAIN,
     PLATFORMS,
     SEMS_SYNC_INTERVAL,
@@ -25,67 +27,50 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up the GoodWe Local SEMS Bridge integration from a config entry."""
-    _LOGGER.warning("async_setup_entry called for entry: %s", entry.entry_id)
-    
+    """Set up the GoodWe Local SEMS Bridge from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-
-    # Verify that the Goodwe integration exists
-    goodwe_entry_id = entry.data.get(CONF_GOODWE_ENTRY_ID)
-    goodwe_entries = hass.config_entries.async_entries("goodwe")
-    
-    if not any(e.entry_id == goodwe_entry_id for e in goodwe_entries):
-        raise ConfigEntryNotReady("Goodwe integration not found")
-    _LOGGER.warning("Goodwe entry found: %s", goodwe_entry_id)
 
     relay = GoodweLocalSemsRelay(
         hass=hass,
-        goodwe_entry_id=goodwe_entry_id,
-        sems_username=entry.data.get(CONF_USERNAME),
-        sems_password=entry.data.get(CONF_PASSWORD),
-        sems_station_id=entry.data.get(CONF_SEMS_STATION_ID),
-        device_id=entry.data.get(CONF_DEVICE_ID),
-        device_serial=entry.data.get(CONF_DEVICE_SERIAL),
+        inverter_host=entry.data[CONF_INVERTER_HOST],
+        inverter_port=entry.data.get(CONF_INVERTER_PORT, DEFAULT_INVERTER_PORT),
+        model_family=entry.data.get(CONF_MODEL_FAMILY, "None"),
+        device_header_hex=entry.data[CONF_DEVICE_HEADER],
+        device_id=entry.data[CONF_DEVICE_ID],
+        device_serial=entry.data[CONF_DEVICE_SERIAL],
     )
-    _LOGGER.warning("Relay created successfully")
 
-    # Test initial sync
-    if not await relay.async_sync():
-        _LOGGER.info("Initial SEMS sync in progress, will continue retrying")
-    _LOGGER.warning("Initial sync completed")
-    
-    async def sync_callback(now):
-        """Sync data to SEMS periodically."""
+    # Initial connection check
+    if not await relay.async_connect():
+        raise ConfigEntryNotReady(
+            f"Cannot connect to inverter at {entry.data[CONF_INVERTER_HOST]}"
+        )
+
+    # Attempt first sync immediately
+    await relay.async_sync()
+
+    async def _sync_callback(now):
         await relay.async_sync()
 
     hass.data[DOMAIN][entry.entry_id] = relay
-    _LOGGER.warning("Relay stored in hass.data")
-    
-    remove_listener = async_track_time_interval(
-        hass, sync_callback, SEMS_SYNC_INTERVAL
+    hass.data[DOMAIN][f"{entry.entry_id}_listener"] = async_track_time_interval(
+        hass, _sync_callback, SEMS_SYNC_INTERVAL
     )
-    hass.data[DOMAIN][f"{entry.entry_id}_listener"] = remove_listener
-    _LOGGER.warning("Time interval listener registered")
+
     _LOGGER.info(
-        "GoodWe Local SEMS Bridge configured with Goodwe entry %s - sync to SEMS every 60 seconds",
-        goodwe_entry_id,
+        "GoodWe Local SEMS Bridge started for %s — syncing to SEMS every 60 seconds",
+        entry.data[CONF_INVERTER_HOST],
     )
 
-    _LOGGER.warning("About to forward entry setups for platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    _LOGGER.warning("async_forward_entry_setups completed")
-
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    remove_listener = hass.data[DOMAIN].pop(f"{entry.entry_id}_listener", None)
-    if remove_listener:
-        remove_listener()
+    listener = hass.data[DOMAIN].pop(f"{entry.entry_id}_listener", None)
+    if listener:
+        listener()
 
     hass.data[DOMAIN].pop(entry.entry_id, None)
-
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

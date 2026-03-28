@@ -3,10 +3,9 @@
   "name": "GoodWe Local SEMS Bridge",
   "codeowners": [],
   "config_flow": true,
-  "after_dependencies": ["goodwe"],
   "documentation": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md",
   "iot_class": "local_polling",
   "issues": "https://github.com/ongas/goodwe_local_SEMS_bridge/issues",
-  "requirements": ["cryptography>=41.0.0"],
-  "version": "1.0.0"
+  "requirements": ["cryptography>=41.0.0", "goodwe>=0.3.0"],
+  "version": "2.0.0"
 }

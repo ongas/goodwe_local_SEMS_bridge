@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import CONF_DEVICE_HEADER, CONF_DEVICE_ID, CONF_DEVICE_SERIAL, CONF_INVERTER_HOST, DOMAIN
 from .coordinator import GoodweLocalSemsRelay
 
 
@@ -17,21 +17,12 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     relay: GoodweLocalSemsRelay = hass.data[DOMAIN][entry.entry_id]
 
-    goodwe_entry = hass.config_entries.async_get_entry(relay.goodwe_entry_id)
-    goodwe_state = str(goodwe_entry.state) if goodwe_entry else "not found"
-
-    try:
-        goodwe_data = await relay._get_goodwe_data()
-    except Exception:  # pylint: disable=broad-except
-        goodwe_data = None
-
     return {
         "config": {
-            "goodwe_entry_id": relay.goodwe_entry_id,
-            "goodwe_entry_state": goodwe_state,
-            "sems_station_id": relay.sems_station_id,
-            "device_id": relay.device_id,
-            "device_serial": relay.device_serial,
+            "inverter_host": entry.data.get(CONF_INVERTER_HOST),
+            "device_id": entry.data.get(CONF_DEVICE_ID),
+            "device_serial": entry.data.get(CONF_DEVICE_SERIAL),
+            "device_header": entry.data.get(CONF_DEVICE_HEADER),
         },
         "sync_status": {
             "last_sync": relay._last_sems_sync.isoformat() if relay._last_sems_sync else None,
@@ -39,6 +30,5 @@ async def async_get_config_entry_diagnostics(
             "last_sync_failed": relay._sems_sync_failed,
             "last_error": relay._last_error,
         },
-        "goodwe_data_available": goodwe_data is not None,
-        "goodwe_data_keys": list(goodwe_data.keys()) if goodwe_data else [],
+        "runtime_data_keys": list(relay.last_runtime_data.keys()),
     }

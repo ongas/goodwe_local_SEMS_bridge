@@ -1,1 +1,31 @@
-{}
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "GoodWe Local SEMS Bridge",
+        "description": "Enter the IP address of your GoodWe inverter. The inverter will be contacted to verify the connection and read its device information.",
+        "data": {
+          "inverter_host": "Inverter IP address",
+          "inverter_port": "Port (default 8899)"
+        },
+        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md"
+      },
+      "confirm": {
+        "title": "Confirm Inverter",
+        "description": "Found inverter **{model}** (S/N: {serial}) at {host}.\n\nConfirm to complete setup. The integration will connect directly to your inverter and relay its data to the SEMS portal every 60 seconds.",
+        "data": {}
+      }
+    },
+    "abort": {
+      "already_configured": "This inverter is already configured.",
+      "cannot_read_header": "Connected to the inverter but could not read device data. Try again."
+    }
+  },
+  "error": {
+    "cannot_connect": "Unable to connect to SEMS portal. Check your network connection.",
+    "invalid_auth": "Invalid SEMS username or password.",
+    "cannot_fetch_stations": "Authenticated successfully but failed to retrieve power stations.",
+    "no_stations": "No power stations found on this SEMS account.",
+    "cannot_fetch_inverters": "Failed to retrieve inverters for the selected station.",
+    "no_inverters": "No inverters found for the selected power station."
+  }
