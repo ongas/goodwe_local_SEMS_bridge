@@ -39,11 +39,12 @@ async def _sems_fetch_stations(hass: HomeAssistant, username: str, password: str
     """Authenticate to SEMS and return (token_data, stations, error_key)."""
     session = async_get_clientsession(hass)
 
-    # Step 1: Authenticate
+    # Step 1: Authenticate — send as raw string body (SEMS API requires this format)
     try:
+        login_body = f'{{"account":"{username}","pwd":"{password}"}}'
         resp = await session.post(
             SEMS_LOGIN_URL,
-            json={"account": username, "pwd": password},
+            data=login_body,
             headers={"Content-Type": "application/json", "token": SEMS_BASE_TOKEN},
             timeout=15,
         )
@@ -58,13 +59,13 @@ async def _sems_fetch_stations(hass: HomeAssistant, username: str, password: str
     if not isinstance(token_data, dict):
         return None, None, "invalid_auth"
 
-    # Step 2: Fetch station list
+    # Step 2: Fetch station list — GET with full token_data in header
     try:
-        resp = await session.post(
+        resp = await session.get(
             SEMS_STATION_LIST_URL,
-            json={"page": 1, "per_page": 50},
             headers={
                 "Content-Type": "application/json",
+                "Accept": "application/json",
                 "token": json.dumps(token_data),
             },
             timeout=15,
