@@ -6,7 +6,6 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
@@ -40,14 +39,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         device_serial=entry.data[CONF_DEVICE_SERIAL],
     )
 
-    # Initial connection check
+    # Attempt initial connection — if inverter is offline (e.g. night-time standby),
+    # log a warning and continue. The sync loop will reconnect when it wakes up.
     if not await relay.async_connect():
-        raise ConfigEntryNotReady(
-            f"Cannot connect to inverter at {entry.data[CONF_INVERTER_HOST]}"
+        _LOGGER.warning(
+            "Inverter at %s is unreachable at startup (offline/standby). "
+            "Will retry every 60 seconds.",
+            entry.data[CONF_INVERTER_HOST],
         )
-
-    # Attempt first sync immediately
-    await relay.async_sync()
+    else:
+        # Attempt first sync immediately only if connected
+        await relay.async_sync()
 
     async def _sync_callback(now):
         await relay.async_sync()
