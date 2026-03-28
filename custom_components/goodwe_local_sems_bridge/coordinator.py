@@ -167,6 +167,13 @@ class GoodweLocalSemsRelay:
         self._sync_count: int = 0
         self._sync_count_date: str = ""  # date string for daily reset
 
+        # Persistent TCP connection to SEMS cloud
+        # SEMS only updates the live pac/last_refresh_time display while the
+        # TCP connection stays open (verified March 2026). A new connection
+        # per packet causes SEMS to accept energy data but not live status.
+        self._sems_reader: asyncio.StreamReader | None = None
+        self._sems_writer: asyncio.StreamWriter | None = None
+
         # Latest decoded sensor values (for HA sensor entities)
         self.last_runtime_data: dict[str, Any] = {}
 
@@ -338,10 +345,44 @@ class GoodweLocalSemsRelay:
         ])
         return bytes(plaintext)
 
-    async def _send_to_sems(self, packet: bytes, plaintext: bytes) -> bool:
-        """Open a TCP connection to SEMS, send the packet, and verify the ACK.
+    async def _ensure_sems_connection(self) -> bool:
+        """Ensure the persistent TCP connection to SEMS is alive. Returns True if ready."""
+        if self._sems_writer is not None and not self._sems_writer.is_closing():
+            return True
+        try:
+            self._sems_reader, self._sems_writer = await asyncio.open_connection(
+                SEMS_CLOUD_HOST, SEMS_CLOUD_PORT
+            )
+            _LOGGER.debug("Opened persistent SEMS TCP connection")
+            return True
+        except Exception as ex:  # pylint: disable=broad-except
+            _LOGGER.error("Failed to connect to SEMS: %s", ex)
+            self._sems_reader = None
+            self._sems_writer = None
+            return False
 
-        SEMS responds with a 58-byte packet (header "GW", not "POSTGW"):
+    async def _close_sems_connection(self) -> None:
+        """Close the persistent SEMS TCP connection."""
+        if self._sems_writer is not None:
+            try:
+                self._sems_writer.close()
+                await self._sems_writer.wait_closed()
+            except Exception:  # pylint: disable=broad-except
+                pass
+            self._sems_reader = None
+            self._sems_writer = None
+
+    async def _send_to_sems(
+        self, packet: bytes, plaintext: bytes  # noqa: ARG002
+    ) -> bool:
+        """Send packet on the persistent SEMS TCP connection and verify the ACK.
+
+        Maintains a long-lived TCP connection across syncs.  SEMS only updates
+        the live pac / last_refresh_time display while the connection is open —
+        a new connection per packet causes SEMS to silently drop live updates
+        (verified March 2026).
+
+        SEMS responds with a 58-byte ACK packet (header "GW", not "POSTGW"):
           [0:2]   = b"GW"
           [2:6]   = length (uint32 BE)
           [6:8]   = packet type (0x0104)
@@ -356,39 +397,45 @@ class GoodweLocalSemsRelay:
           all-zeros  → ACK (accepted)
           0x02+zeros → NACK (rejected)
         """
-        try:
-            reader, writer = await asyncio.open_connection(SEMS_CLOUD_HOST, SEMS_CLOUD_PORT)
-            writer.write(packet)
-            await writer.drain()
+        # Try to use existing connection, reconnect once on failure.
+        for attempt in range(2):
+            if not await self._ensure_sems_connection():
+                return False
             try:
-                ack = await asyncio.wait_for(reader.read(256), timeout=5.0)
-                writer.close()
-                await writer.wait_closed()
-                if len(ack) >= 58:
-                    iv = ack[24:40]
-                    try:
-                        cipher = Cipher(
-                            algorithms.AES(POSTGW_ENCRYPTION_KEY),
-                            modes.CBC(iv),
-                            backend=default_backend(),
-                        )
-                        decrypted = cipher.decryptor().update(ack[40:56]) + cipher.decryptor().finalize()
-                        if decrypted[0] == 0x02:
-                            _LOGGER.warning(
-                                "SEMS returned NACK (packet rejected). Raw ACK: %s", ack.hex()
+                assert self._sems_writer is not None
+                assert self._sems_reader is not None
+                self._sems_writer.write(packet)
+                await self._sems_writer.drain()
+                try:
+                    ack = await asyncio.wait_for(self._sems_reader.read(256), timeout=5.0)
+                    if len(ack) >= 58:
+                        iv = ack[24:40]
+                        try:
+                            cipher = Cipher(
+                                algorithms.AES(POSTGW_ENCRYPTION_KEY),
+                                modes.CBC(iv),
+                                backend=default_backend(),
                             )
-                            return False
-                        _LOGGER.debug("SEMS ACK accepted (payload[0]=0x%02x)", decrypted[0])
-                    except Exception:  # pylint: disable=broad-except
-                        _LOGGER.debug("SEMS ACK received but decrypt failed (raw: %s)", ack.hex())
-                else:
-                    _LOGGER.debug("SEMS ACK received (%d bytes, raw: %s)", len(ack), ack.hex())
-                return True
-            except asyncio.TimeoutError:
-                writer.close()
-                await writer.wait_closed()
-                _LOGGER.debug("No SEMS ACK (timeout) — packet likely accepted")
-                return True
-        except Exception as ex:  # pylint: disable=broad-except
-            _LOGGER.error("Failed to send packet to SEMS: %s", ex)
-            return False
+                            decrypted = cipher.decryptor().update(ack[40:56]) + cipher.decryptor().finalize()
+                            if decrypted[0] == 0x02:
+                                _LOGGER.warning(
+                                    "SEMS returned NACK (packet rejected). Raw ACK: %s", ack.hex()
+                                )
+                                return False
+                            _LOGGER.debug("SEMS ACK accepted (payload[0]=0x%02x)", decrypted[0])
+                        except Exception:  # pylint: disable=broad-except
+                            _LOGGER.debug("SEMS ACK received but decrypt failed (raw: %s)", ack.hex())
+                    else:
+                        _LOGGER.debug("SEMS ACK received (%d bytes, raw: %s)", len(ack), ack.hex())
+                    return True
+                except asyncio.TimeoutError:
+                    _LOGGER.debug("No SEMS ACK (timeout) — packet likely accepted")
+                    return True
+            except Exception as ex:  # pylint: disable=broad-except
+                _LOGGER.debug("SEMS send failed on attempt %d: %s", attempt + 1, ex)
+                await self._close_sems_connection()
+                if attempt == 0:
+                    continue  # retry with fresh connection
+                _LOGGER.error("Failed to send packet to SEMS: %s", ex)
+                return False
+        return False
