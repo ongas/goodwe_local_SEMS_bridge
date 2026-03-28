@@ -22,10 +22,6 @@
     }
   },
   "error": {
-    "cannot_connect": "Unable to connect to SEMS portal. Check your network connection.",
-    "invalid_auth": "Invalid SEMS username or password.",
-    "cannot_fetch_stations": "Authenticated successfully but failed to retrieve power stations.",
-    "no_stations": "No power stations found on this SEMS account.",
-    "cannot_fetch_inverters": "Failed to retrieve inverters for the selected station.",
-    "no_inverters": "No inverters found for the selected power station."
+    "cannot_connect": "Unable to connect to inverter. Check the IP address and ensure the inverter is reachable."
   }
+}

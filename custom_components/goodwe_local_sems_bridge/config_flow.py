@@ -23,13 +23,10 @@ from .const import (
     CONF_MODEL_FAMILY,
     DEFAULT_INVERTER_PORT,
     DOMAIN,
+    KNOWN_DT_DEVICE_HEADER_HEX,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# Fixed-size constants for the POSTGW plaintext format
-_DEVICE_HEADER_SIZE = 21   # bytes 0x00–0x14 of the 240-byte POSTGW plaintext
-_MODBUS_DATA_SIZE = 219    # bytes 0x15–0xEF of the 240-byte POSTGW plaintext
 
 
 async def _connect_and_probe(
@@ -45,38 +42,6 @@ async def _connect_and_probe(
     except Exception:  # pylint: disable=broad-except
         return None, "cannot_connect"
 
-
-async def _read_device_header(hass: HomeAssistant, inverter: Any) -> str | None:
-    """Read one raw running-data response, extract the 21-byte device header, return as hex.
-
-    The 240-byte POSTGW plaintext = device_header(21) + modbus_response_data[:219].
-    The device header is constant per device (firmware/model bytes prepended by inverter firmware).
-    We obtain it by reading a real captured plaintext from the inverter via modbus, then capturing
-    the first 21 bytes from an actual POSTGW packet.
-
-    Since we cannot intercept POSTGW directly here, we use the known-stable approach:
-    attempt to get the header from the goodwe library's raw response.
-    The first 21 bytes of the POSTGW plaintext correspond to the first 21 bytes of the
-    trimmed running-data response returned by the inverter.
-    """
-    try:
-        response = await inverter._read_from_socket(  # pylint: disable=protected-access
-            inverter._READ_RUNNING_DATA  # pylint: disable=protected-access
-        )
-        raw = response.response_data()
-        if len(raw) < _DEVICE_HEADER_SIZE + _MODBUS_DATA_SIZE:
-            _LOGGER.warning(
-                "Running data response too short: %d bytes (need %d)",
-                len(raw), _DEVICE_HEADER_SIZE + _MODBUS_DATA_SIZE,
-            )
-            return None
-        # The first 21 bytes of the trimmed response ARE the device header
-        header_hex = raw[:_DEVICE_HEADER_SIZE].hex()
-        _LOGGER.debug("Device header learned: %s", header_hex)
-        return header_hex
-    except Exception as ex:  # pylint: disable=broad-except
-        _LOGGER.warning("Failed to read device header: %s", ex)
-        return None
 
 
 class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -133,10 +98,10 @@ class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             inv = self._inverter
 
-            # Read the 21-byte device header from the inverter's raw running-data response
-            device_header = await _read_device_header(self.hass, inv)
-            if not device_header:
-                return self.async_abort(reason="cannot_read_header")
+            # Device header is the 21-byte firmware-level POSTGW prefix — constant per model.
+            # It is NOT readable via the modbus/goodwe library (it's prepended by the inverter
+            # firmware itself). Use the known constant derived from MITM captures.
+            device_header = KNOWN_DT_DEVICE_HEADER_HEX
 
             # Device ID and serial come from the inverter's serial number field
             # GoodWe serial numbers are 16 chars: first 8 = device_id, last 8 = device_serial

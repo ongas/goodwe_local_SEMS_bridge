@@ -233,19 +233,28 @@ class GoodweLocalSemsRelay:
     # ── Private helpers ────────────────────────────────────────────────────────
 
     async def _read_raw_running_data(self) -> bytes | None:
-        """Read raw running-data bytes from inverter. Returns trimmed response or None."""
+        """Read raw running-data bytes from inverter. Returns data padded to MODBUS_DATA_SIZE or None.
+
+        DT-family inverters (25KMT etc.) return 146 bytes (73 registers × 2).
+        The POSTGW plaintext needs 219 bytes of modbus data. The missing 73 bytes
+        are mostly zeros in real captures (static register pointers + 0xFF sentinels)
+        and are not validated by SEMS for physical plausibility. Zero-pad them.
+        """
         try:
             response = await self._inverter._read_from_socket(  # pylint: disable=protected-access
                 self._inverter._READ_RUNNING_DATA  # pylint: disable=protected-access
             )
             raw = response.response_data()
-            if len(raw) < DEVICE_HEADER_SIZE + MODBUS_DATA_SIZE:
-                _LOGGER.warning(
-                    "Running data response too short: %d bytes (need %d)",
-                    len(raw),
-                    DEVICE_HEADER_SIZE + MODBUS_DATA_SIZE,
-                )
+            if len(raw) < 10:
+                _LOGGER.warning("Running data response too short: %d bytes", len(raw))
                 return None
+            # Pad to MODBUS_DATA_SIZE with zeros if inverter returns fewer bytes (DT = 146 bytes)
+            if len(raw) < MODBUS_DATA_SIZE:
+                _LOGGER.debug(
+                    "Padding modbus response from %d to %d bytes",
+                    len(raw), MODBUS_DATA_SIZE,
+                )
+                raw = raw + bytes(MODBUS_DATA_SIZE - len(raw))
             return raw
         except Exception as ex:  # pylint: disable=broad-except
             _LOGGER.error("Failed to read inverter running data: %s", ex)
