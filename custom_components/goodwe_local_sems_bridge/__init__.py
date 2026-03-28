@@ -26,6 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the GoodWe Local SEMS Bridge integration from a config entry."""
+    _LOGGER.warning("async_setup_entry called for entry: %s", entry.entry_id)
     
     hass.data.setdefault(DOMAIN, {})
 
@@ -35,6 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     if not any(e.entry_id == goodwe_entry_id for e in goodwe_entries):
         raise ConfigEntryNotReady("Goodwe integration not found")
+    _LOGGER.warning("Goodwe entry found: %s", goodwe_entry_id)
 
     relay = GoodweLocalSemsRelay(
         hass=hass,
@@ -45,27 +47,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         device_id=entry.data.get(CONF_DEVICE_ID),
         device_serial=entry.data.get(CONF_DEVICE_SERIAL),
     )
+    _LOGGER.warning("Relay created successfully")
 
     # Test initial sync
     if not await relay.async_sync():
         _LOGGER.info("Initial SEMS sync in progress, will continue retrying")
+    _LOGGER.warning("Initial sync completed")
     
     async def sync_callback(now):
         """Sync data to SEMS periodically."""
         await relay.async_sync()
 
     hass.data[DOMAIN][entry.entry_id] = relay
+    _LOGGER.warning("Relay stored in hass.data")
     
     remove_listener = async_track_time_interval(
         hass, sync_callback, SEMS_SYNC_INTERVAL
     )
     hass.data[DOMAIN][f"{entry.entry_id}_listener"] = remove_listener
+    _LOGGER.warning("Time interval listener registered")
     _LOGGER.info(
         "GoodWe Local SEMS Bridge configured with Goodwe entry %s - sync to SEMS every 60 seconds",
         goodwe_entry_id,
     )
 
+    _LOGGER.warning("About to forward entry setups for platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _LOGGER.warning("async_forward_entry_setups completed")
 
     return True
 
