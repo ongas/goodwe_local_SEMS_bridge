@@ -3,7 +3,7 @@
   "name": "GoodWe Local SEMS Bridge",
   "codeowners": [],
   "config_flow": true,
-  "dependencies": ["goodwe"],
+  "after_dependencies": ["goodwe"],
   "documentation": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md",
   "iot_class": "local_polling",
   "issues": "https://github.com/ongas/goodwe_local_SEMS_bridge/issues",
