@@ -255,7 +255,21 @@ class GoodweLocalSemsRelay:
             )
 
             if not goodwe_runtime_data:
-                _LOGGER.warning("Goodwe integration not found")
+                # Distinguish between "entry doesn't exist" and "entry exists but hasn't loaded"
+                goodwe_entry = self.hass.config_entries.async_get_entry(self.goodwe_entry_id)
+                if goodwe_entry is None:
+                    _LOGGER.warning(
+                        "Goodwe config entry '%s' not found - was it removed?",
+                        self.goodwe_entry_id,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Goodwe entry '%s' (%s) exists but has no runtime data - "
+                        "it may still be loading or failed to connect to the inverter (state: %s)",
+                        self.goodwe_entry_id,
+                        goodwe_entry.title,
+                        goodwe_entry.state,
+                    )
                 return None
 
             goodwe_coordinator = goodwe_runtime_data.coordinator
