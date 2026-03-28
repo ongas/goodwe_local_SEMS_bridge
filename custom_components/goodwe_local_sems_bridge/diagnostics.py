@@ -32,7 +32,6 @@ async def async_get_config_entry_diagnostics(
             "sems_station_id": relay.sems_station_id,
             "device_id": relay.device_id,
             "device_serial": relay.device_serial,
-            "sync_to_cloud": relay.sync_to_cloud,
         },
         "sync_status": {
             "last_sync": relay._last_sems_sync.isoformat() if relay._last_sems_sync else None,
