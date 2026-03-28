@@ -198,7 +198,6 @@ class GoodweLocalSemsRelay:
         
         Returns True if sync succeeded, False otherwise.
         """
-        _LOGGER.warning("BRIDGE: async_sync called")
         try:
             # Get data from Goodwe integration
             goodwe_data = await self._get_goodwe_data()

@@ -26,7 +26,6 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the GoodWe Local SEMS Bridge integration from a config entry."""
-    _LOGGER.info("BRIDGE: async_setup_entry called for entry %s", entry.entry_id)
     
     hass.data.setdefault(DOMAIN, {})
 
@@ -61,7 +60,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, sync_callback, SEMS_SYNC_INTERVAL
     )
     hass.data[DOMAIN][f"{entry.entry_id}_listener"] = remove_listener
-    _LOGGER.warning("BRIDGE: setup_entry completed successfully")
     _LOGGER.info(
         "GoodWe Local SEMS Bridge configured with Goodwe entry %s - sync to SEMS every 60 seconds",
         goodwe_entry_id,
