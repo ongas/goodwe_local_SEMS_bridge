@@ -51,8 +51,6 @@ class SemsSyncStatusSensor(SensorEntity):
 
     @property
     def native_value(self) -> str:
-        if not self._relay.sync_to_cloud:
-            return "Disabled"
         if self._relay._last_sems_sync is None:
             return "Pending"
         return "Failed" if self._relay._sems_sync_failed else "OK"
@@ -70,8 +68,6 @@ class SemsSyncStatusSensor(SensorEntity):
             return "mdi:cloud-check"
         if status == "Failed":
             return "mdi:cloud-alert"
-        if status == "Disabled":
-            return "mdi:cloud-off"
         return "mdi:cloud-clock"
 
 

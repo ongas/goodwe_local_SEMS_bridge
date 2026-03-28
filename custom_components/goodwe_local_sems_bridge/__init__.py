@@ -15,7 +15,6 @@ from .const import (
     CONF_DEVICE_SERIAL,
     CONF_GOODWE_ENTRY_ID,
     CONF_SEMS_STATION_ID,
-    CONF_SYNC_TO_CLOUD,
     DOMAIN,
     PLATFORMS,
     SEMS_SYNC_INTERVAL,
@@ -27,6 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the GoodWe Local SEMS Bridge integration from a config entry."""
+    _LOGGER.info("BRIDGE: async_setup_entry called for entry %s", entry.entry_id)
     
     hass.data.setdefault(DOMAIN, {})
 
@@ -37,7 +37,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not any(e.entry_id == goodwe_entry_id for e in goodwe_entries):
         raise ConfigEntryNotReady("Goodwe integration not found")
 
-    sync_to_cloud = entry.data.get(CONF_SYNC_TO_CLOUD, True)
     relay = GoodweLocalSemsRelay(
         hass=hass,
         goodwe_entry_id=goodwe_entry_id,
@@ -46,13 +45,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         sems_station_id=entry.data.get(CONF_SEMS_STATION_ID),
         device_id=entry.data.get(CONF_DEVICE_ID),
         device_serial=entry.data.get(CONF_DEVICE_SERIAL),
-        sync_to_cloud=sync_to_cloud,
     )
 
-    # Test initial sync if cloud sync is enabled
-    if sync_to_cloud:
-        if not await relay.async_sync():
-            _LOGGER.info("Initial SEMS sync in progress, will continue retrying")
+    # Test initial sync
+    if not await relay.async_sync():
+        _LOGGER.info("Initial SEMS sync in progress, will continue retrying")
     
     async def sync_callback(now):
         """Sync data to SEMS periodically."""
@@ -60,20 +57,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = relay
     
-    if sync_to_cloud:
-        remove_listener = async_track_time_interval(
-            hass, sync_callback, SEMS_SYNC_INTERVAL
-        )
-        hass.data[DOMAIN][f"{entry.entry_id}_listener"] = remove_listener
-        _LOGGER.info(
-            "GoodWe Local SEMS Bridge configured with Goodwe entry %s - cloud sync enabled (60s interval)",
-            goodwe_entry_id,
-        )
-    else:
-        hass.data[DOMAIN][f"{entry.entry_id}_listener"] = None
-        _LOGGER.info(
-            "GoodWe Local SEMS Bridge configured - cloud sync disabled"
-        )
+    remove_listener = async_track_time_interval(
+        hass, sync_callback, SEMS_SYNC_INTERVAL
+    )
+    hass.data[DOMAIN][f"{entry.entry_id}_listener"] = remove_listener
+    _LOGGER.warning("BRIDGE: setup_entry completed successfully")
+    _LOGGER.info(
+        "GoodWe Local SEMS Bridge configured with Goodwe entry %s - sync to SEMS every 60 seconds",
+        goodwe_entry_id,
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

@@ -16,5 +16,4 @@ CONF_SEMS_PASSWORD = "sems_password"
 CONF_SEMS_STATION_ID = "sems_station_id"
 CONF_DEVICE_ID = "device_id"
 CONF_DEVICE_SERIAL = "device_serial"
-CONF_SYNC_TO_CLOUD = "sync_to_cloud"
 

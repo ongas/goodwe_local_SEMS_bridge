@@ -177,7 +177,6 @@ class GoodweLocalSemsRelay:
         sems_station_id: str,
         device_id: str,
         device_serial: str,
-        sync_to_cloud: bool = True,
     ) -> None:
         """Initialize the relay."""
         self.hass = hass
@@ -187,7 +186,6 @@ class GoodweLocalSemsRelay:
         self.sems_station_id = sems_station_id
         self.device_id = device_id
         self.device_serial = device_serial
-        self.sync_to_cloud = sync_to_cloud
         
         self._postgw_client = POSTGWClient()
         self._last_sems_sync: datetime | None = None
@@ -199,16 +197,27 @@ class GoodweLocalSemsRelay:
         """Sync latest Goodwe data to SEMS via POSTGW protocol.
         
         Returns True if sync succeeded, False otherwise.
-        If sync_to_cloud is disabled, returns True without syncing.
         """
-        if not self.sync_to_cloud:
-            return True
-        
+        _LOGGER.warning("BRIDGE: async_sync called")
         try:
             # Get data from Goodwe integration
             goodwe_data = await self._get_goodwe_data()
             if goodwe_data is None:
                 return False
+            
+            # Log key values being sent
+            _LOGGER.info(
+                "Syncing inverter data to SEMS: vpv1=%.1fV ipv1=%.1fA vgrid=%.1fV igrid=%.1fA "
+                "pgrid=%dW e_day=%.1fkWh e_total=%.1fkWh temp=%.1f°C",
+                goodwe_data.get("vpv1", 0),
+                goodwe_data.get("ipv1", 0),
+                goodwe_data.get("vgrid", 0),
+                goodwe_data.get("igrid", 0),
+                goodwe_data.get("pgrid", 0),
+                goodwe_data.get("e_day", 0),
+                goodwe_data.get("e_total", 0),
+                goodwe_data.get("temperature", 0),
+            )
             
             # Build POSTGW payload from inverter data
             payload = self._build_postgw_payload(goodwe_data)

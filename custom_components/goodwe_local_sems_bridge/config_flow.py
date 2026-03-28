@@ -20,7 +20,6 @@ from .const import (
     CONF_DEVICE_SERIAL,
     CONF_GOODWE_ENTRY_ID,
     CONF_SEMS_STATION_ID,
-    CONF_SYNC_TO_CLOUD,
     DOMAIN,
 )
 
@@ -303,7 +302,23 @@ class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "Selected inverter SN %s → device_id=%s device_serial=%s",
                     chosen_sn, inv["device_id"], inv["device_serial"],
                 )
-            return await self.async_step_sync_settings()
+            
+            # Create entry directly (cloud sync is always enabled)
+            goodwe_entry_id = self.context.get("goodwe_entry_id")
+            sems_data = self.context.get("sems_data", {})
+            goodwe_entries = self.hass.config_entries.async_entries("goodwe")
+            goodwe_entry = next(
+                (e for e in goodwe_entries if e.entry_id == goodwe_entry_id),
+                None,
+            )
+            title = f"GoodWe SEMS Bridge - {goodwe_entry.title}" if goodwe_entry else "GoodWe SEMS Bridge"
+            return self.async_create_entry(
+                title=title,
+                data={
+                    **sems_data,
+                    CONF_GOODWE_ENTRY_ID: goodwe_entry_id,
+                },
+            )
 
         inverter_options = {
             i["sn"]: f"{i['name']} (SN: {i['sn']})" if i["name"] != i["sn"] else i["sn"]
@@ -331,42 +346,7 @@ class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders=description_placeholders,
         )
 
-    async def async_step_sync_settings(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Step to configure sync settings."""
-        if user_input is not None:
-            goodwe_entry_id = self.context.get("goodwe_entry_id")
-            sems_data = self.context.get("sems_data", {})
-            goodwe_entries = self.hass.config_entries.async_entries("goodwe")
-            goodwe_entry = next(
-                (e for e in goodwe_entries if e.entry_id == goodwe_entry_id),
-                None,
-            )
 
-            title = f"GoodWe SEMS Bridge - {goodwe_entry.title}" if goodwe_entry else "GoodWe SEMS Bridge"
-
-            return self.async_create_entry(
-                title=title,
-                data={
-                    **sems_data,
-                    **user_input,
-                    CONF_GOODWE_ENTRY_ID: goodwe_entry_id,
-                },
-            )
-
-        schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_SYNC_TO_CLOUD, default=True
-                ): cv.boolean,
-            }
-        )
-
-        return self.async_show_form(
-            step_id="sync_settings",
-            data_schema=schema,
-        )
 
     async def async_step_import(self, import_data: dict[str, Any]) -> FlowResult:
         """Handle import from configuration.yaml."""
