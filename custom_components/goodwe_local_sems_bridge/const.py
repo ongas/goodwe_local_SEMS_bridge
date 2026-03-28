@@ -6,7 +6,7 @@ from homeassistant.const import Platform
 
 DOMAIN = "goodwe_local_sems_bridge"
 
-PLATFORMS = []  # No entities exposed - just relay functionality
+PLATFORMS = [Platform.SENSOR]
 
 SEMS_SYNC_INTERVAL = timedelta(minutes=1)  # Factory default: sync once per minute
 

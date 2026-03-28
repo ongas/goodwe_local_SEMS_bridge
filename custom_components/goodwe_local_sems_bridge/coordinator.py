@@ -192,6 +192,8 @@ class GoodweLocalSemsRelay:
         self._postgw_client = POSTGWClient()
         self._last_sems_sync: datetime | None = None
         self._sems_sync_failed = False
+        self._sync_count: int = 0
+        self._last_error: str | None = None
 
     async def async_sync(self) -> bool:
         """Sync latest Goodwe data to SEMS via POSTGW protocol.
@@ -222,16 +224,20 @@ class GoodweLocalSemsRelay:
             if await self._postgw_client.send_packet_async(packet):
                 self._last_sems_sync = datetime.now()
                 self._sems_sync_failed = False
+                self._sync_count += 1
+                self._last_error = None
                 _LOGGER.info("POSTGW packet sent to SEMS successfully")
                 return True
             else:
-                _LOGGER.error("Failed to send POSTGW packet to SEMS")
                 self._sems_sync_failed = True
+                self._last_error = "Failed to send POSTGW packet"
+                _LOGGER.error("Failed to send POSTGW packet to SEMS")
                 return False
             
         except Exception as ex:  # pylint: disable=broad-except
             _LOGGER.error("SEMS sync failed: %s", ex)
             self._sems_sync_failed = True
+            self._last_error = str(ex)
             return False
 
     async def _get_goodwe_data(self) -> dict[str, Any] | None:
