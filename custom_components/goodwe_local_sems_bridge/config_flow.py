@@ -16,14 +16,11 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
-    CONF_AA55_PROXY_ENABLED,
-    CONF_AA55_PROXY_PORT,
     CONF_DEVICE_ID,
     CONF_DEVICE_SERIAL,
     CONF_GOODWE_ENTRY_ID,
     CONF_SEMS_STATION_ID,
     CONF_SYNC_TO_CLOUD,
-    DEFAULT_AA55_PROXY_PORT,
     DOMAIN,
 )
 
@@ -339,30 +336,8 @@ class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Step to configure sync settings."""
         if user_input is not None:
-            self.context["sync_data"] = user_input
-            return await self.async_step_aa55_settings()
-
-        schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_SYNC_TO_CLOUD, default=True
-                ): cv.boolean,
-            }
-        )
-
-        return self.async_show_form(
-            step_id="sync_settings",
-            data_schema=schema,
-        )
-
-    async def async_step_aa55_settings(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Step to configure AA55 MITM proxy settings."""
-        if user_input is not None:
             goodwe_entry_id = self.context.get("goodwe_entry_id")
             sems_data = self.context.get("sems_data", {})
-            sync_data = self.context.get("sync_data", {})
             goodwe_entries = self.hass.config_entries.async_entries("goodwe")
             goodwe_entry = next(
                 (e for e in goodwe_entries if e.entry_id == goodwe_entry_id),
@@ -375,7 +350,6 @@ class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 title=title,
                 data={
                     **sems_data,
-                    **sync_data,
                     **user_input,
                     CONF_GOODWE_ENTRY_ID: goodwe_entry_id,
                 },
@@ -384,16 +358,13 @@ class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required(
-                    CONF_AA55_PROXY_ENABLED, default=False
+                    CONF_SYNC_TO_CLOUD, default=True
                 ): cv.boolean,
-                vol.Optional(
-                    CONF_AA55_PROXY_PORT, default=DEFAULT_AA55_PROXY_PORT
-                ): cv.port,
             }
         )
 
         return self.async_show_form(
-            step_id="aa55_settings",
+            step_id="sync_settings",
             data_schema=schema,
         )
 

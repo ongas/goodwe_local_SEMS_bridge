@@ -11,14 +11,11 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
-    CONF_AA55_PROXY_ENABLED,
-    CONF_AA55_PROXY_PORT,
     CONF_DEVICE_ID,
     CONF_DEVICE_SERIAL,
     CONF_GOODWE_ENTRY_ID,
     CONF_SEMS_STATION_ID,
     CONF_SYNC_TO_CLOUD,
-    DEFAULT_AA55_PROXY_PORT,
     DOMAIN,
     PLATFORMS,
     SEMS_SYNC_INTERVAL,
@@ -76,14 +73,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][f"{entry.entry_id}_listener"] = None
         _LOGGER.info(
             "GoodWe Local SEMS Bridge configured - cloud sync disabled"
-        )
-
-    # Set up AA55 MITM proxy if enabled
-    aa55_proxy_enabled = entry.data.get(CONF_AA55_PROXY_ENABLED, False)
-    if aa55_proxy_enabled:
-        _LOGGER.warning(
-            "AA55 MITM Proxy is configured but not yet implemented. "
-            "Will relay Goodwe data via POSTGW protocol instead."
         )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

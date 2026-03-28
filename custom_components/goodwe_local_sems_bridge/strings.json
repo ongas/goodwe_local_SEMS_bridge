@@ -44,19 +44,6 @@
           "sync_to_cloud": "Enable syncing inverter data to Goodwe SEMS cloud at 60-second intervals using POSTGW protocol"
         },
         "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
-      },
-      "aa55_settings": {
-        "title": "AA55 MITM Proxy (Optional)",
-        "description": "Configure optional local AA55 protocol interception (advanced feature)",
-        "data": {
-          "aa55_proxy_enabled": "Enable AA55 MITM Proxy",
-          "aa55_proxy_port": "AA55 Proxy Port"
-        },
-        "data_description": {
-          "aa55_proxy_enabled": "Enable local MITM proxy to intercept inverter packets (requires network configuration)",
-          "aa55_proxy_port": "TCP port for AA55 MITM proxy listener (default: 20001)"
-        },
-        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#aa55-mitm-proxy"
       }
     },
     "abort": {
