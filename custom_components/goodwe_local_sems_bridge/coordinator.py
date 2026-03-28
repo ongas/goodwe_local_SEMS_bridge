@@ -222,7 +222,7 @@ class GoodweLocalSemsRelay:
             if await self._postgw_client.send_packet_async(packet):
                 self._last_sems_sync = datetime.now()
                 self._sems_sync_failed = False
-                _LOGGER.debug("POSTGW packet sent to SEMS successfully")
+                _LOGGER.info("POSTGW packet sent to SEMS successfully")
                 return True
             else:
                 _LOGGER.error("Failed to send POSTGW packet to SEMS")

@@ -306,7 +306,7 @@ class GoodweLocalSemsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_sync_settings()
 
         inverter_options = {
-            i["sn"]: f"{i['name']} (SN: {i['sn']})"
+            i["sn"]: f"{i['name']} (SN: {i['sn']})" if i["name"] != i["sn"] else i["sn"]
             for i in self._inverters
         }
         first_inv = self._inverters[0] if self._inverters else None
