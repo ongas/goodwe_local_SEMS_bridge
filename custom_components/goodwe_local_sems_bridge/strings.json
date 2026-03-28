@@ -11,11 +11,26 @@
       },
       "sems_credentials": {
         "title": "SEMS API Credentials",
-        "description": "Enter your SEMS account credentials (used for reference only, not required for data relay)",
+        "description": "Enter your SEMS account credentials. Your power stations and inverters will be fetched automatically.",
         "data": {
           "username": "SEMS Username",
-          "password": "SEMS Password",
-          "sems_station_id": "SEMS Station ID"
+          "password": "SEMS Password"
+        },
+        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
+      },
+      "select_station": {
+        "title": "Select Power Station",
+        "description": "Choose your SEMS power station. The first station is selected by default.",
+        "data": {
+          "sems_station_id": "Power Station"
+        },
+        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
+      },
+      "select_inverter": {
+        "title": "Select Inverter",
+        "description": "Choose your inverter. Device ID and serial number will be derived automatically.\n\nDefault device ID: `{device_id}` | Serial: `{device_serial}`",
+        "data": {
+          "inverter_sn": "Inverter"
         },
         "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
       },
@@ -48,5 +63,11 @@
       "no_goodwe_integration": "No GoodWe integration found. Please set up the GoodWe integration first."
     }
   },
-  "error": {}
-}
+  "error": {
+    "cannot_connect": "Unable to connect to SEMS portal. Check your network connection.",
+    "invalid_auth": "Invalid SEMS username or password.",
+    "cannot_fetch_stations": "Authenticated successfully but failed to retrieve power stations.",
+    "no_stations": "No power stations found on this SEMS account.",
+    "cannot_fetch_inverters": "Failed to retrieve inverters for the selected station.",
+    "no_inverters": "No inverters found for the selected power station."
+  }
