@@ -39,6 +39,7 @@ from goodwe import InverterError, connect as goodwe_connect
 from goodwe.inverter import Inverter
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -305,8 +306,11 @@ class GoodweLocalSemsRelay:
         plaintext = bytearray(self._device_header + raw_response[:MODBUS_DATA_SIZE])
         assert len(plaintext) == POSTGW_PLAINTEXT_SIZE
 
-        # Overwrite timestamp at 0x15 with current local time
-        now = datetime.now()  # LOCAL time — matches inverter timezone convention
+        # Overwrite timestamp at 0x15 with current local time (HA configured timezone)
+        # Must use dt_util.now() not datetime.now() — the Docker container runs UTC but
+        # SEMS expects the inverter's local solar time (e.g. AEDT), matching what the
+        # inverter firmware itself embeds.
+        now = dt_util.now()  # Returns datetime in HA's configured timezone
         plaintext[TIMESTAMP_OFFSET:TIMESTAMP_OFFSET + TIMESTAMP_SIZE] = bytes([
             now.year - 2000,
             now.month,
