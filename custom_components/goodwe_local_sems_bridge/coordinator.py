@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import struct
 from typing import Any
@@ -222,7 +222,7 @@ class GoodweLocalSemsRelay:
             
             # Send to SEMS
             if await self._postgw_client.send_packet_async(packet):
-                self._last_sems_sync = datetime.now()
+                self._last_sems_sync = datetime.now(timezone.utc)
                 self._sems_sync_failed = False
                 self._sync_count += 1
                 self._last_error = None
