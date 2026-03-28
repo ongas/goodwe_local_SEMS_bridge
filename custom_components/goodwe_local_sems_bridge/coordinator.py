@@ -212,21 +212,24 @@ class GoodweLocalSemsRelay:
             # ── Step 3: Build + send POSTGW packet ────────────────────────────
             packet = _build_postgw_packet(plaintext, self._device_id, self._device_serial)
 
-            sent = await self._send_to_sems(packet)
+            # Read PAC directly from the plaintext we're about to send (plaintext[0x4D:0x4F])
+            pac_from_plaintext = int.from_bytes(plaintext[0x4D:0x4F], "big", signed=True)
+
+            sent = await self._send_to_sems(packet, plaintext)
             if sent:
                 self._last_sems_sync = datetime.now(timezone.utc)
                 self._sems_sync_failed = False
                 self._last_error = None
                 self._sync_count += 1
                 _LOGGER.info(
-                    "POSTGW packet sent to SEMS (sync #%d, pac=%sW)",
+                    "POSTGW packet sent to SEMS (sync #%d, pac=%dW)",
                     self._sync_count,
-                    self.last_runtime_data.get("total_inverter_power", "?"),
+                    pac_from_plaintext,
                 )
                 return True
             else:
                 self._sems_sync_failed = True
-                self._last_error = "TCP send to SEMS failed"
+                self._last_error = "SEMS rejected packet (NACK)"
                 return False
 
         except Exception as ex:  # pylint: disable=broad-except
@@ -314,20 +317,52 @@ class GoodweLocalSemsRelay:
         ])
         return bytes(plaintext)
 
-    async def _send_to_sems(self, packet: bytes) -> bool:
-        """Open a TCP connection to SEMS and send the packet."""
+    async def _send_to_sems(self, packet: bytes, plaintext: bytes) -> bool:
+        """Open a TCP connection to SEMS, send the packet, and verify the ACK.
+
+        SEMS responds with a 30-byte packet containing an AES-encrypted 16-byte
+        payload. Decrypted, it is either all-zeros (ACK = accepted) or
+        0x02+zeros (NACK = rejected, e.g. bad CRC or invalid data).
+        The IV for decryption is the same timestamp-based IV we used to encrypt.
+        """
         try:
             reader, writer = await asyncio.open_connection(SEMS_CLOUD_HOST, SEMS_CLOUD_PORT)
             writer.write(packet)
             await writer.drain()
             try:
                 ack = await asyncio.wait_for(reader.read(256), timeout=5.0)
-                _LOGGER.debug("SEMS ACK received (%d bytes)", len(ack))
+                writer.close()
+                await writer.wait_closed()
+                if len(ack) >= 30:
+                    # Decrypt the 16-byte payload (bytes 12:28 of the ACK packet)
+                    # using the same IV we sent (plaintext[0x15:0x1B] + 10 zeros)
+                    ts_bytes = plaintext[TIMESTAMP_OFFSET : TIMESTAMP_OFFSET + TIMESTAMP_SIZE]
+                    iv = ts_bytes + bytes(10)
+                    try:
+                        cipher = Cipher(
+                            algorithms.AES(POSTGW_ENCRYPTION_KEY),
+                            modes.CBC(iv),
+                            backend=default_backend(),
+                        )
+                        decrypted = cipher.decryptor().update(ack[12:28])
+                        if decrypted[0] == 0x02:
+                            _LOGGER.warning(
+                                "SEMS returned NACK (packet rejected). "
+                                "Raw ACK: %s", ack.hex()
+                            )
+                            return False
+                        _LOGGER.debug("SEMS ACK accepted (decrypted[0]=0x%02x)", decrypted[0])
+                    except Exception:  # pylint: disable=broad-except
+                        # Decryption failed — log raw bytes and assume accepted
+                        _LOGGER.debug("SEMS response (raw): %s", ack.hex())
+                else:
+                    _LOGGER.debug("SEMS ACK received (%d bytes, raw: %s)", len(ack), ack.hex())
+                return True
             except asyncio.TimeoutError:
+                writer.close()
+                await writer.wait_closed()
                 _LOGGER.debug("No SEMS ACK (timeout) — packet likely accepted")
-            writer.close()
-            await writer.wait_closed()
-            return True
+                return True
         except Exception as ex:  # pylint: disable=broad-except
             _LOGGER.error("Failed to send packet to SEMS: %s", ex)
             return False
