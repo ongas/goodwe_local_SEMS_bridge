@@ -33,7 +33,6 @@ def _device_info(entry: ConfigEntry) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
         name=entry.title,
-        manufacturer="GoodWe",
         model="SEMS Bridge",
     )
 
