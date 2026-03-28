@@ -239,26 +239,37 @@ class GoodweLocalSemsRelay:
         The POSTGW plaintext needs 219 bytes of modbus data. The missing 73 bytes
         are mostly zeros in real captures (static register pointers + 0xFF sentinels)
         and are not validated by SEMS for physical plausibility. Zero-pad them.
+
+        If the inverter rejects the read (busy — likely the official goodwe integration
+        just polled it), wait 2 seconds and retry once before giving up.
         """
-        try:
-            response = await self._inverter._read_from_socket(  # pylint: disable=protected-access
-                self._inverter._READ_RUNNING_DATA  # pylint: disable=protected-access
-            )
-            raw = response.response_data()
-            if len(raw) < 10:
-                _LOGGER.warning("Running data response too short: %d bytes", len(raw))
-                return None
-            # Pad to MODBUS_DATA_SIZE with zeros if inverter returns fewer bytes (DT = 146 bytes)
-            if len(raw) < MODBUS_DATA_SIZE:
-                _LOGGER.debug(
-                    "Padding modbus response from %d to %d bytes",
-                    len(raw), MODBUS_DATA_SIZE,
+        for attempt in range(2):
+            try:
+                response = await self._inverter._read_from_socket(  # pylint: disable=protected-access
+                    self._inverter._READ_RUNNING_DATA  # pylint: disable=protected-access
                 )
-                raw = raw + bytes(MODBUS_DATA_SIZE - len(raw))
-            return raw
-        except Exception as ex:  # pylint: disable=broad-except
-            _LOGGER.error("Failed to read inverter running data: %s", ex)
-            return None
+                raw = response.response_data()
+                if len(raw) < 10:
+                    _LOGGER.warning("Running data response too short: %d bytes", len(raw))
+                    return None
+                # Pad to MODBUS_DATA_SIZE with zeros if inverter returns fewer bytes (DT = 146 bytes)
+                if len(raw) < MODBUS_DATA_SIZE:
+                    _LOGGER.debug(
+                        "Padding modbus response from %d to %d bytes",
+                        len(raw), MODBUS_DATA_SIZE,
+                    )
+                    raw = raw + bytes(MODBUS_DATA_SIZE - len(raw))
+                return raw
+            except Exception as ex:  # pylint: disable=broad-except
+                if attempt == 0:
+                    _LOGGER.debug("Read attempt 1 failed (%s), retrying in 2s", ex)
+                    await asyncio.sleep(2)
+                    self._inverter = None  # Force fresh connection for retry
+                    if not await self.async_connect():
+                        return None
+                else:
+                    _LOGGER.error("Failed to read inverter running data: %s", ex)
+                    return None
 
     def _build_plaintext(self, raw_response: bytes) -> bytes:
         """Build the 240-byte POSTGW plaintext.
