@@ -148,7 +148,7 @@ async def _sems_fetch_inverters(hass: HomeAssistant, token_data: dict, station_i
             "sn": sn,
             "device_id": device_id,
             "device_serial": device_serial,
-            "name": inv.get("name") or inv.get("model") or sn,
+            "name": inv.get("name") or inv.get("model") or "GoodWe Inverter",
         })
 
     if not inverters:
