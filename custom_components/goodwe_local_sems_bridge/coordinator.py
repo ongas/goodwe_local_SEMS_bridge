@@ -17,11 +17,13 @@ Architecture
 DT-family plaintext size (confirmed):
   DT inverters (e.g. GW25K-MT) return 146 bytes (73 registers × 2) from
   _READ_RUNNING_DATA (register 0x7594, count 0x49). The 240-byte POSTGW
-  plaintext requires 219 bytes of modbus data, so the final 73 bytes are
-  zero-padded. SEMS ignores these trailing bytes — confirmed by A/B test
-  (March 2026): a zero-padded packet and a full-data packet were both
-  accepted identically. GoodWe inverters of other families (e.g. DNS G3 /
-  ET series) send larger plaintexts using the same protocol wrapper.
+  plaintext needs 219 bytes of modbus data; the remaining 73 bytes are
+  filled with KNOWN_DT_PLAINTEXT_TAIL_HEX from const.py — a static
+  pointer/sentinel table that is identical across all captured packets for
+  this inverter model. Zero-padding those bytes causes SEMS to ACK the
+  packet but silently refuse to update the live pac / last_refresh_time
+  display (verified March 2026). GoodWe inverters of other families (e.g.
+  DNS G3 / ET series) send larger plaintexts using the same protocol.
 """
 
 from __future__ import annotations
@@ -41,6 +43,8 @@ from goodwe.inverter import Inverter
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from .const import KNOWN_DT_PLAINTEXT_TAIL_HEX
+
 _LOGGER = logging.getLogger(__name__)
 
 # ── POSTGW protocol constants ────────────────────────────────────────────────
@@ -58,10 +62,12 @@ POSTGW_ENCRYPTION_KEY = bytes([0xFF] * 16)
 #   [0x1B:0xEF] 213 bytes  modbus sensor data (registers 0x7596+)
 #   Total plaintext           = 240 bytes = 15 × 16 (AES block size)
 #
-# DT inverters return 146 bytes (73 registers × 2) from _READ_RUNNING_DATA.
-# The remaining 73 bytes (plaintext[167:240]) are zero-padded — confirmed safe
-# by A/B test March 2026: SEMS accepts and displays zero-padded packets
-# identically to full-data packets.
+# DT inverters (_READ_RUNNING_DATA) return 146 bytes (73 registers × 2,
+# regs 0x7594–0x75DC).  The remaining 73 bytes (plaintext[167:240],
+# regs 0x75DD–0x7601) must be filled with KNOWN_DT_PLAINTEXT_TAIL_HEX —
+# a static pointer/sentinel table written by the inverter firmware.
+# Zero-padding this section causes SEMS to silently skip updating the live
+# pac / last_refresh_time display (even though it still ACKs the packet).
 POSTGW_PLAINTEXT_SIZE = 240
 DEVICE_HEADER_SIZE = 21       # bytes 0x00–0x14: firmware constant, 21 bytes
 MODBUS_DATA_SIZE = 219        # bytes 0x15–0xEF: 146 real (DT) + 73 zero-padded
@@ -159,6 +165,7 @@ class GoodweLocalSemsRelay:
         self._sems_sync_failed: bool = False
         self._last_error: str | None = None
         self._sync_count: int = 0
+        self._sync_count_date: str = ""  # date string for daily reset
 
         # Latest decoded sensor values (for HA sensor entities)
         self.last_runtime_data: dict[str, Any] = {}
@@ -221,9 +228,14 @@ class GoodweLocalSemsRelay:
                 self._last_sems_sync = datetime.now(timezone.utc)
                 self._sems_sync_failed = False
                 self._last_error = None
+                # Reset count at start of each new day (HA local time)
+                today = dt_util.now().strftime("%Y-%m-%d")
+                if today != self._sync_count_date:
+                    self._sync_count = 0
+                    self._sync_count_date = today
                 self._sync_count += 1
                 _LOGGER.info(
-                    "POSTGW packet sent to SEMS (sync #%d, pac=%dW)",
+                    "POSTGW packet sent to SEMS (sync #%d today, pac=%dW)",
                     self._sync_count,
                     pac_from_plaintext,
                 )
@@ -274,11 +286,16 @@ class GoodweLocalSemsRelay:
                 # The trailing 73 bytes are structurally unused by SEMS for DT hardware —
                 # confirmed safe by A/B test (March 2026).
                 if len(raw) < MODBUS_DATA_SIZE:
+                    # Pad with the known static tail bytes (NOT zeros).
+                    # Zero-padding causes SEMS to skip live pac/last_refresh_time
+                    # updates even though it still ACKs the packet.
+                    tail = bytes.fromhex(KNOWN_DT_PLAINTEXT_TAIL_HEX)
+                    padding = tail[: MODBUS_DATA_SIZE - len(raw)]
                     _LOGGER.debug(
-                        "Padding modbus response from %d to %d bytes (DT normal)",
+                        "Padding modbus response from %d to %d bytes with DT static tail",
                         len(raw), MODBUS_DATA_SIZE,
                     )
-                    raw = raw + bytes(MODBUS_DATA_SIZE - len(raw))
+                    raw = raw + padding
                 return raw
             except Exception as ex:  # pylint: disable=broad-except
                 if attempt == 0:
@@ -324,10 +341,20 @@ class GoodweLocalSemsRelay:
     async def _send_to_sems(self, packet: bytes, plaintext: bytes) -> bool:
         """Open a TCP connection to SEMS, send the packet, and verify the ACK.
 
-        SEMS responds with a 30-byte packet containing an AES-encrypted 16-byte
-        payload. Decrypted, it is either all-zeros (ACK = accepted) or
-        0x02+zeros (NACK = rejected, e.g. bad CRC or invalid data).
-        The IV for decryption is the same timestamp-based IV we used to encrypt.
+        SEMS responds with a 58-byte packet (header "GW", not "POSTGW"):
+          [0:2]   = b"GW"
+          [2:6]   = length (uint32 BE)
+          [6:8]   = packet type (0x0104)
+          [8:16]  = device ID (8 bytes ASCII)
+          [16:24] = device serial (8 bytes ASCII)
+          [24:30] = server timestamp (6 bytes: sec,min,hour,day,month,year-2000)
+          [30:40] = 10 zero bytes (completing 16-byte IV)
+          [40:56] = AES-128-CBC encrypted 16-byte payload
+          [56:58] = CRC-16 LE
+
+        Decrypting ack[40:56] with IV=ack[24:40] and key=0xFF*16:
+          all-zeros  → ACK (accepted)
+          0x02+zeros → NACK (rejected)
         """
         try:
             reader, writer = await asyncio.open_connection(SEMS_CLOUD_HOST, SEMS_CLOUD_PORT)
@@ -337,28 +364,23 @@ class GoodweLocalSemsRelay:
                 ack = await asyncio.wait_for(reader.read(256), timeout=5.0)
                 writer.close()
                 await writer.wait_closed()
-                if len(ack) >= 30:
-                    # Decrypt the 16-byte payload (bytes 12:28 of the ACK packet)
-                    # using the same IV we sent (plaintext[0x15:0x1B] + 10 zeros)
-                    ts_bytes = plaintext[TIMESTAMP_OFFSET : TIMESTAMP_OFFSET + TIMESTAMP_SIZE]
-                    iv = ts_bytes + bytes(10)
+                if len(ack) >= 58:
+                    iv = ack[24:40]
                     try:
                         cipher = Cipher(
                             algorithms.AES(POSTGW_ENCRYPTION_KEY),
                             modes.CBC(iv),
                             backend=default_backend(),
                         )
-                        decrypted = cipher.decryptor().update(ack[12:28])
+                        decrypted = cipher.decryptor().update(ack[40:56]) + cipher.decryptor().finalize()
                         if decrypted[0] == 0x02:
                             _LOGGER.warning(
-                                "SEMS returned NACK (packet rejected). "
-                                "Raw ACK: %s", ack.hex()
+                                "SEMS returned NACK (packet rejected). Raw ACK: %s", ack.hex()
                             )
                             return False
-                        _LOGGER.debug("SEMS ACK accepted (decrypted[0]=0x%02x)", decrypted[0])
+                        _LOGGER.debug("SEMS ACK accepted (payload[0]=0x%02x)", decrypted[0])
                     except Exception:  # pylint: disable=broad-except
-                        # Decryption failed — log raw bytes and assume accepted
-                        _LOGGER.debug("SEMS response (raw): %s", ack.hex())
+                        _LOGGER.debug("SEMS ACK received but decrypt failed (raw: %s)", ack.hex())
                 else:
                     _LOGGER.debug("SEMS ACK received (%d bytes, raw: %s)", len(ack), ack.hex())
                 return True

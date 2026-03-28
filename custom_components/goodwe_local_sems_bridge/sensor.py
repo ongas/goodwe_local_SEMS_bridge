@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import GoodweLocalSemsRelay
@@ -90,28 +91,4 @@ class SemsSyncLastTimeSensor(SensorEntity):
 
 
 class SemsSyncCountSensor(RestoreSensor):
-    """Reports the total number of successful syncs, persisted across restarts."""
-
-    _attr_has_entity_name = True
-    _attr_name = "Sync Count"
-    _attr_icon = "mdi:counter"
-    _attr_native_unit_of_measurement = "syncs"
-    _attr_state_class = "total_increasing"
-
-    def __init__(self, relay: GoodweLocalSemsRelay, entry: ConfigEntry) -> None:
-        self._relay = relay
-        self._attr_unique_id = f"{entry.entry_id}_sync_count"
-        self._attr_device_info = _device_info(entry)
-
-    async def async_added_to_hass(self) -> None:
-        """Restore previous sync count so the total survives HA restarts."""
-        if (last_state := await self.async_get_last_sensor_data()) is not None:
-            try:
-                restored = int(last_state.native_value)
-                self._relay._sync_count = restored
-            except (TypeError, ValueError):
-                pass
-
-    @property
-    def native_value(self) -> int:
-        return self._relay._sync_count
+    """Reports the number of successful syncs today. Resets at midnight.\n\n    Restores previous value across restarts only if the date matches today,\n    so a restart never carries yesterday's count into a new day.\n    \"\"\"\n\n    _attr_has_entity_name = True\n    _attr_name = "Sync Count"\n    _attr_icon = "mdi:counter"\n    _attr_native_unit_of_measurement = "syncs"\n\n    def __init__(self, relay: GoodweLocalSemsRelay, entry: ConfigEntry) -> None:\n        self._relay = relay\n        self._attr_unique_id = f"{entry.entry_id}_sync_count"\n        self._attr_device_info = _device_info(entry)\n\n    async def async_added_to_hass(self) -> None:\n        """Restore today's sync count after a restart.\n\n        Only applies the restored value if the stored date matches today,\n        so yesterday's syncs are never carried over.\n        \"\"\"\n        from homeassistant.util import dt as dt_util\n        if (last_state := await self.async_get_last_sensor_data()) is not None:\n            try:\n                stored_date = (last_state.extra_data or {}).get("date", "")\n                today = dt_util.now().strftime("%Y-%m-%d")\n                if stored_date == today:\n                    restored = int(last_state.native_value)\n                    self._relay._sync_count = restored\n                    self._relay._sync_count_date = today\n            except (TypeError, ValueError):\n                pass\n\n    @property\n    def native_value(self) -> int:\n        return self._relay._sync_count\n\n    @property\n    def extra_state_attributes(self) -> dict[str, Any]:\n        return {"date": self._relay._sync_count_date}
