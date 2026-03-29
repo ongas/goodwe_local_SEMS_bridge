@@ -198,9 +198,9 @@ class GoodweLocalSemsRelay:
 
             # ── Step 2: Build 240-byte plaintext from decoded values ──────────
             plaintext = self._build_plaintext_from_runtime_data(self.last_runtime_data)
-            pac_w = int(self.last_runtime_data.get("total_inverter_power", 0))
+            pac_w = int(self.last_runtime_data.get("ppv", 0))
             _LOGGER.info(
-                "Built plaintext: pac=%dW, vpv1=%.1fV, vgrid1=%.1fV, temp=%.1f°C, e_day=%.1fkWh",
+                "Built plaintext: ppv=%dW, vpv1=%.1fV, vgrid1=%.1fV, temp=%.1f°C, e_day=%.1fkWh",
                 pac_w,
                 self.last_runtime_data.get("vpv1", 0),
                 self.last_runtime_data.get("vgrid1", 0),
@@ -222,7 +222,7 @@ class GoodweLocalSemsRelay:
                     self._sync_count_date = today
                 self._sync_count += 1
                 _LOGGER.info(
-                    "POSTGW packet sent to SEMS (sync #%d today, pac=%dW)",
+                    "POSTGW packet sent to SEMS (sync #%d today, ppv=%dW)",
                     self._sync_count,
                     pac_w,
                 )
@@ -309,8 +309,8 @@ class GoodweLocalSemsRelay:
         _u16(_reg(30125), data.get("fgrid2", 0) * 100)   # fgrid2 Hz×100
         _u16(_reg(30126), data.get("fgrid3", 0) * 100)   # fgrid3 Hz×100
 
-        # Power (register 30128, signed)
-        _i16(_reg(30128), data.get("total_inverter_power", 0))
+        # Power (register 30128) — use ppv (PV DC output) not AC grid power
+        _i16(_reg(30128), data.get("ppv", 0))
 
         # Work mode (register 30129)
         _u16(_reg(30129), data.get("work_mode", 0))
@@ -359,9 +359,9 @@ class GoodweLocalSemsRelay:
         pt[_CONSTANT_TAIL_OFFSET:_CONSTANT_TAIL_OFFSET + len(_CONSTANT_TAIL)] = _CONSTANT_TAIL
 
         _LOGGER.info(
-            "Built plaintext (register dump): pac=%sW, vpv1=%sV, "
+            "Built plaintext (register dump): ppv=%sW, vpv1=%sV, "
             "vgrid1=%sV, temp=%s°C, e_day=%skWh, work_mode=%s",
-            data.get("total_inverter_power", 0), data.get("vpv1", 0),
+            data.get("ppv", 0), data.get("vpv1", 0),
             data.get("vgrid1", 0), data.get("temperature", 0),
             data.get("e_day", 0), data.get("work_mode", 0),
         )
