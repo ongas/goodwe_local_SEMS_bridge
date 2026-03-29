@@ -24,6 +24,7 @@ async def async_setup_entry(
     """Set up sensors for this config entry."""
     relay: GoodweLocalSemsRelay = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([
+        InverterConnectionStatusSensor(relay, entry),
         SemsSyncStatusSensor(relay, entry),
         SemsSyncLastTimeSensor(relay, entry),
         SemsSyncCountSensor(relay, entry),
@@ -36,6 +37,37 @@ def _device_info(entry: ConfigEntry) -> DeviceInfo:
         name=entry.title,
         model="SEMS Bridge",
     )
+
+
+class InverterConnectionStatusSensor(SensorEntity):
+    """Reports connection status to the inverter: Connected or Disconnected."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Connection Status"
+    _attr_icon = "mdi:connection"
+
+    def __init__(self, relay: GoodweLocalSemsRelay, entry: ConfigEntry) -> None:
+        self._relay = relay
+        self._attr_unique_id = f"{entry.entry_id}_connection_status"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def native_value(self) -> str:
+        return "Connected" if self._relay._inverter is not None else "Disconnected"
+
+    @property
+    def icon(self) -> str:
+        return "mdi:check-circle" if self.native_value == "Connected" else "mdi:alert-circle"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = {}
+        if self._relay._inverter is not None:
+            attrs["model"] = self._relay._inverter.model_name
+            attrs["serial"] = self._relay._inverter.serial_number
+        if self._relay._last_error:
+            attrs["last_error"] = self._relay._last_error
+        return attrs
 
 
 class SemsSyncStatusSensor(SensorEntity):
