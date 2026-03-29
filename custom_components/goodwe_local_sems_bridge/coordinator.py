@@ -200,7 +200,14 @@ class GoodweLocalSemsRelay:
             # ── Step 2: Build 240-byte plaintext from decoded values ──────────
             plaintext = self._build_plaintext_from_runtime_data(self.last_runtime_data)
             pac_w = int(self.last_runtime_data.get("total_inverter_power", 0))
-
+            _LOGGER.info(
+                "Built plaintext: pac=%dW, vpv1=%.1fV, vgrid1=%.1fV, temp=%.1f°C, e_day=%.1fkWh",
+                pac_w,
+                self.last_runtime_data.get("vpv1", 0),
+                self.last_runtime_data.get("vgrid1", 0),
+                self.last_runtime_data.get("temperature", 0),
+                self.last_runtime_data.get("e_day", 0),
+            )
             # ── Step 3: Build + send POSTGW packet ────────────────────────────
             packet = _build_postgw_packet(plaintext, self._device_id, self._device_serial)
 
