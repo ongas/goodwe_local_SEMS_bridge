@@ -63,7 +63,7 @@ For example, register **30128** (`ppv`, PV DC power) → `0x15 + 28×2` = `0x15 
 
 **Device header (21 bytes):** A firmware-level constant prepended to every packet by the inverter firmware — not accessible via the Modbus/goodwe library. The DT-family constant is embedded in this integration and applied automatically. The config flow captures it during setup so other families can be supported.
 
-**Register mapping:** The Modbus data region (offsets 0x15–0xCC) is a direct sequential dump of registers 30100–30172. The offset for any register is `0x15 + (register - 30100) * 2`. This was verified by comparing real MITM captures against the goodwe library's DT register definitions — every field matches.
+**Register mapping:** The Modbus data region (offsets 0x15–0xCC) is a direct sequential dump of registers 30100–30172. The offset for any register is `0x15 + (register - 30100) * 2`. This was verified by comparing real MITM captures against the goodwe library's DT register definitions — every field matches. All scaling factors (÷10 for voltage/current, ÷100 for frequency, ÷1000 for power_factor, etc.) are correctly reversed to restore raw register values for SEMS compatibility.
 
 **Firmware sentinel tail (35 bytes at 0xCD–0xEF):** The last 35 bytes of the plaintext are a constant pointer/sentinel table written by the inverter firmware, not corresponding to readable Modbus registers. **Sending zeros here causes SEMS to ACK the packet and accumulate `eDay` but silently skip updating the live display (`pac` / `last_refresh_time`).** The correct bytes are embedded in this integration.
 
