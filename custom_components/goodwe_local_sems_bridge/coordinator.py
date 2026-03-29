@@ -56,15 +56,15 @@ _PT_vpv2        = 0x1F   # uint16  vpv2   (V × 10)
 _PT_ipv2        = 0x21   # uint16  ipv2   (A × 10)
 _PT_vpv3        = 0x23   # uint16  vpv3   (V × 10)
 _PT_ipv3        = 0x25   # uint16  ipv3   (A × 10)
+_PT_iac1        = 0x32   # uint16  iac1   (legacy name for igrid1_backup) (A × 10)
 _PT_vgrid1      = 0x39   # uint16  vgrid1 (V × 10)
-_PT_igrid1      = 0x32   # uint16  igrid1 (A × 10)
+_PT_igrid1      = 0x3F   # uint16  igrid1 (A × 10) ** CORRECTED from 0x32 **
 _PT_vgrid2      = 0x3B   # uint16  vgrid2 (V × 10)
-_PT_igrid2      = 0x43   # uint16  igrid2 (A × 10)
-_PT_vgrid3      = 0x3D   # uint16  vgrid3 (V × 10) (inferred from pattern)
-_PT_igrid3      = 0x42   # uint16  igrid3 (A × 10)
-_PT_fgrid1      = 0x45   # uint16  fgrid1 (Hz × 100)
-_PT_fgrid2      = 0x46   # uint16  fgrid2 (Hz × 100) (estimated)
-_PT_fgrid3      = 0x47   # uint16  fgrid3 (Hz × 100)
+_PT_vgrid3      = 0x3D   # uint16  vgrid3 (V × 10)
+_PT_iac2        = 0x43   # uint16  iac2   (A × 10) ** CORRECTED: was igrid2  **
+_PT_fgrid1      = 0x45   # uint16  fgrid1/fac1 (Hz × 100)
+_PT_fgrid3      = 0x47   # uint16  fgrid3/fac3 (Hz × 100)
+# Note: igrid2, igrid3, fgrid2 not in validated offsets - using best guesses or omitting
 _PT_pac         = 0x4D   # int16   total_inverter_power (W × 1)
 _PT_work_mode   = 0x4F   # uint16  work_mode (enum)
 _PT_error_codes = 0x50   # uint32  error_codes (bitmap)
@@ -307,14 +307,15 @@ class GoodweLocalSemsRelay:
         _u16(_PT_vgrid2,      data.get("vgrid2", 0) * 10)
         _u16(_PT_vgrid3,      data.get("vgrid3", 0) * 10)
 
-        # Grid currents (÷10 in goodwe → ×10 to raw, all three phases)
+        # Grid current (÷10 in goodwe → ×10 to raw)
+        # Note: Only igrid1 is mapped in validated offsets (0x3F)
         _u16(_PT_igrid1,      data.get("igrid1", 0) * 10)
-        _u16(_PT_igrid2,      data.get("igrid2", 0) * 10)
-        _u16(_PT_igrid3,      data.get("igrid3", 0) * 10)
+        _u16(_PT_iac2,        data.get("igrid2", 0) * 10)  # iac2 name maps to igrid2
 
-        # Grid frequencies (÷100 in goodwe → ×100 to raw, all three + main)
+        # Grid frequencies (÷100 in goodwe → ×100 to raw)
+        # Note: Only fgrid1 and fgrid3 validated; fgrid2 NOT mapped
         _u16(_PT_fgrid1,      data.get("fgrid1", 0) * 100)
-        _u16(_PT_fgrid2,      data.get("fgrid2", 0) * 100)
+        # REMOVED: fgrid2 (0x46) - not in validated offsets
         _u16(_PT_fgrid3,      data.get("fgrid3", 0) * 100)
 
         # Power outputs (W ×1)
@@ -355,8 +356,8 @@ class GoodweLocalSemsRelay:
             "vpv1=%sV, vpv2=%sV, vpv3=%sV, "
             "ipv1=%sA, ipv2=%sA, ipv3=%sA, "
             "vgrid1=%sV, vgrid2=%sV, vgrid3=%sV, "
-            "igrid1=%sA, igrid2=%sA, igrid3=%sA, "
-            "fgrid1=%sHz, fgrid2=%sHz, fgrid3=%sHz, "
+            "igrid1=%sA, iac2=%sA, "
+            "fgrid1=%sHz, fgrid3=%sHz, "
             "pac=%sW, temp=%s°C, "
             "e_day=%skWh, e_total=%skWh, h_total=%sh, "
             "work_mode=%s, error_codes=0x%x, "
@@ -366,8 +367,8 @@ class GoodweLocalSemsRelay:
             data.get("vpv1",  0), data.get("vpv2",  0), data.get("vpv3",  0),
             data.get("ipv1",  0), data.get("ipv2",  0), data.get("ipv3",  0),
             data.get("vgrid1", 0), data.get("vgrid2", 0), data.get("vgrid3", 0),
-            data.get("igrid1", 0), data.get("igrid2", 0), data.get("igrid3", 0),
-            data.get("fgrid1", 0), data.get("fgrid2", 0), data.get("fgrid3", 0),
+            data.get("igrid1", 0), data.get("igrid2", 0),
+            data.get("fgrid1", 0), data.get("fgrid3", 0),
             data.get("total_inverter_power", 0), data.get("temperature", 0),
             data.get("e_day", 0), data.get("e_total", 0), data.get("h_total", 0),
             data.get("work_mode", 0), data.get("error_codes", 0),
