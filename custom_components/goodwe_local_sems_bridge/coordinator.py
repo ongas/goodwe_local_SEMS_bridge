@@ -82,6 +82,16 @@ _PT_safety      = 0x6B   # uint16  safety_country (code)
 _PT_funbit      = 0x6A   # uint16  funbit (feature flags)
 _PT_derating    = 0x8B   # uint32  derating_mode (bitmap)
 
+# Static tail bytes (0x93–0xEF): firmware sentinels required by SEMS validation.
+# Extracted from real inverter packets. Sending zeros causes SEMS to ACK but skip live display update.
+# Per README: "The remaining 73 bytes are a static pointer/sentinel table written by the inverter firmware"
+_POSTGW_STATIC_TAIL = bytes.fromhex(
+    "0000000000070000000600000008000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000075fb75ff000000"
+    "0000000000000076017602000000009121912200000000ffffffffffff"
+)
+assert len(_POSTGW_STATIC_TAIL) == 93, f"Static tail should be 93 bytes, got {len(_POSTGW_STATIC_TAIL)}"
+
 
 def _crc16_modbus(data: bytes) -> int:
     """CRC-16 Modbus over the whole supplied buffer."""
@@ -349,6 +359,10 @@ class GoodweLocalSemsRelay:
 
         # Derating mode (bitmap)
         _u32(_PT_derating,    data.get("derating_mode", 0))
+
+        # Fill static tail bytes (0x93–0xEF) — required by SEMS validation
+        # See README: "Sending zeros causes SEMS to ACK but silently skip updating the live display"
+        pt[0x93:] = _POSTGW_STATIC_TAIL
 
         # Log all written fields for debugging
         _LOGGER.info(
