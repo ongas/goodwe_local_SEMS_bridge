@@ -1,18 +1,19 @@
 """SEMS relay coordinator for the GoodWe Local SEMS Bridge integration.
 
-Reads raw Modbus running-data from the inverter, constructs a 240-byte
-POSTGW plaintext, encrypts it (AES-128-CBC, key=0xFF×16), and sends the
-294-byte packet to tcp.goodwe-power.com:20001 over a persistent TCP
-connection. See README for full protocol details.
+Reads inverter data via the goodwe library (read_runtime_data), constructs a
+240-byte POSTGW plaintext from the decoded register values, encrypts it
+(AES-128-CBC, key=0xFF×16), and sends the 294-byte packet to
+tcp.goodwe-power.com:20001 over a persistent TCP connection.
+
+Plaintext field offsets are empirically verified against captured SEMS packets
+(see CONSOLIDATED_FIELD_VALIDATION.csv in the Inverter_MITM archive).
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import struct
 from datetime import datetime, timezone
-from pathlib import Path
 import logging
 from typing import Any
 
@@ -25,7 +26,6 @@ from goodwe.inverter import Inverter
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import KNOWN_DT_PLAINTEXT_TAIL_HEX
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,12 +41,33 @@ POSTGW_ENCRYPTION_KEY = bytes([0xFF] * 16)
 # POSTGW plaintext layout (240 bytes = 15 AES blocks):
 #   [0x00:0x15]  21 bytes  device header (firmware constant, captured at setup)
 #   [0x15:0x1B]   6 bytes  timestamp (YY MM DD HH mm ss, local time)
-#   [0x1B:0xEF] 213 bytes  modbus data: 146 bytes live registers + 73 bytes static tail
+#   [0x1B:0xEF] 213 bytes  mapped register fields (see CONSOLIDATED_FIELD_VALIDATION.csv)
 POSTGW_PLAINTEXT_SIZE = 240
 DEVICE_HEADER_SIZE = 21       # bytes 0x00–0x14: firmware constant, 21 bytes
-MODBUS_DATA_SIZE = 219        # bytes 0x15–0xEF: 146 real (DT) + 73 zero-padded
 TIMESTAMP_OFFSET = 0x15       # 6-byte timestamp inside plaintext
 TIMESTAMP_SIZE = 6
+
+# Empirically verified plaintext field offsets (absolute, from CONSOLIDATED_FIELD_VALIDATION.csv).
+# Raw value = decoded_value × scale_factor (inverse of goodwe library's ÷ scale).
+# All fields are big-endian.  4-byte fields use struct '>I' or '>i'.
+_PT_vpv1        = 0x1B   # uint16  vpv1   (V × 10)
+_PT_ipv1        = 0x1D   # uint16  ipv1   (A × 10)
+_PT_vpv2        = 0x1F   # uint16  vpv2   (V × 10)
+_PT_ipv2        = 0x21   # uint16  ipv2   (A × 10)
+_PT_vpv3        = 0x23   # uint16  vpv3   (V × 10)
+_PT_ipv3        = 0x25   # uint16  ipv3   (A × 10)
+_PT_vgrid1      = 0x39   # uint16  vgrid1 (V × 10)
+_PT_iac1        = 0x32   # uint16  igrid1 (A × 10)
+_PT_iac2        = 0x43   # uint16  igrid2 (A × 10)
+_PT_fac1        = 0x45   # uint16  fgrid1 (Hz × 100)
+_PT_fac2        = 0x45   # same offset — fgrid1/fac1 are the same field
+_PT_fac3        = 0x47   # uint16  fgrid3 (Hz × 100)
+_PT_pac         = 0x4D   # int16   total_inverter_power (W × 1)
+_PT_temperature = 0x67   # int16   temperature (°C × 10)
+_PT_e_day       = 0x6D   # uint16  e_day  (kWh × 10 → hWh)
+_PT_e_total     = 0x6F   # uint32  e_total (kWh × 10 → hWh)
+_PT_h_total     = 0x75   # uint16  h_total (hours × 1)
+_PT_vbus        = 0x81   # uint16  vbus   (V × 10)
 
 
 def _crc16_modbus(data: bytes) -> int:
@@ -100,11 +121,6 @@ def _build_postgw_packet(plaintext: bytes, device_id: str, device_serial: str) -
     return bytes(packet)
 
 
-# Path within the HA config directory where the 240-byte plaintext template is stored.
-# Copy a captured file here: cp captures/inverter_plaintext_<N>.bin /config/goodwe_sems_plaintext_template.bin
-_TEMPLATE_PATH = "/config/goodwe_sems_plaintext_template.bin"
-
-
 class GoodweLocalSemsRelay:
     """Connects directly to the inverter, reads raw modbus data, syncs to SEMS."""
 
@@ -138,13 +154,6 @@ class GoodweLocalSemsRelay:
         self._sems_reader: asyncio.StreamReader | None = None
         self._sems_writer: asyncio.StreamWriter | None = None
 
-        # Captured 240-byte plaintext template: loaded asynchronously on first connect.
-        # When present, sync patches ONLY the timestamp and PAC bytes, which is
-        # the only reliable way to get SEMS to update the live pac/last_refresh_time
-        # display. Raw Modbus-constructed plaintexts fail SEMS's physical plausibility
-        # check (Power ≈ Voltage × Current) and are silently discarded.
-        self._plaintext_template: bytes | None = None
-
         # Latest decoded sensor values (for HA sensor entities)
         self.last_runtime_data: dict[str, Any] = {}
 
@@ -152,10 +161,6 @@ class GoodweLocalSemsRelay:
 
     async def async_connect(self) -> bool:
         """Establish connection to the inverter. Returns True on success."""
-        if self._plaintext_template is None:
-            self._plaintext_template = await self.hass.async_add_executor_job(
-                self._load_plaintext_template
-            )
         try:
             self._inverter = await goodwe_connect(
                 self._inverter_host,
@@ -184,35 +189,17 @@ class GoodweLocalSemsRelay:
                 return False
 
         try:
-            # ── Step 1: Read raw modbus response from inverter ────────────────
-            raw_bytes = await self._read_raw_running_data()
-            if raw_bytes is None:
+            # ── Step 1: Read decoded register values from inverter ────────────
+            try:
+                self.last_runtime_data = await self._inverter.read_runtime_data()
+            except Exception as ex:  # pylint: disable=broad-except
+                _LOGGER.error("Failed to read inverter runtime data: %s", ex)
                 self._inverter = None  # Force reconnect next cycle
                 return False
 
-            # Also decode for HA sensor entities
-            try:
-                self.last_runtime_data = await self._inverter.read_runtime_data()
-            except Exception:  # pylint: disable=broad-except
-                pass  # Sensor data is secondary; don't fail the sync for it
-
-            # ── Step 2: Build 240-byte plaintext ─────────────────────────────
-            # Prefer the captured template: patch only timestamp + PAC so SEMS
-            # receives physically-consistent sensor data and updates the live display.
-            # Fall back to Modbus construction only if no template is available.
-            pac_w: int | None = None
-            if self._plaintext_template is not None:
-                pac_w = int.from_bytes(raw_bytes[0x4D - DEVICE_HEADER_SIZE : 0x4F - DEVICE_HEADER_SIZE], "big", signed=True)
-                plaintext = self._build_plaintext_from_template(pac_w)
-                _LOGGER.debug("Using captured plaintext template (pac=%dW)", pac_w)
-            else:
-                plaintext = self._build_plaintext(raw_bytes)
-                pac_w = int.from_bytes(plaintext[0x4D:0x4F], "big", signed=True)
-                _LOGGER.warning(
-                    "No plaintext template found at %s — using Modbus-constructed plaintext. "
-                    "SEMS live display may not update. Run a MITM capture to generate a template.",
-                    _TEMPLATE_PATH,
-                )
+            # ── Step 2: Build 240-byte plaintext from decoded values ──────────
+            plaintext = self._build_plaintext_from_runtime_data(self.last_runtime_data)
+            pac_w = int(self.last_runtime_data.get("total_inverter_power", 0))
 
             # ── Step 3: Build + send POSTGW packet ────────────────────────────
             packet = _build_postgw_packet(plaintext, self._device_id, self._device_serial)
@@ -256,98 +243,70 @@ class GoodweLocalSemsRelay:
 
     # ── Private helpers ────────────────────────────────────────────────────────
 
-    def _load_plaintext_template(self) -> bytes | None:
-        """Load the 240-byte captured plaintext template from disk, if it exists."""
-        try:
-            data = Path(_TEMPLATE_PATH).read_bytes()
-            if len(data) == POSTGW_PLAINTEXT_SIZE:
-                _LOGGER.info("Loaded POSTGW plaintext template from %s", _TEMPLATE_PATH)
-                return data
-            _LOGGER.warning(
-                "Template at %s has wrong size %d (expected 240) — ignoring",
-                _TEMPLATE_PATH, len(data),
-            )
-        except FileNotFoundError:
-            _LOGGER.info(
-                "No plaintext template at %s — will use Modbus-constructed plaintext. "
-                "SEMS live display may not update until a template is installed.",
-                _TEMPLATE_PATH,
-            )
-        except OSError as exc:
-            _LOGGER.warning("Could not read plaintext template: %s", exc)
-        return None
+    def _build_plaintext_from_runtime_data(self, data: dict[str, Any]) -> bytes:
+        """Build a 240-byte POSTGW plaintext from decoded goodwe runtime data.
 
-    def _build_plaintext_from_template(self, pac_w: int) -> bytes:
-        """Return the template with current timestamp and PAC patched in."""
-        assert self._plaintext_template is not None
-        pt = bytearray(self._plaintext_template)
+        Offsets are empirically verified against captured SEMS packets
+        (see CONSOLIDATED_FIELD_VALIDATION.csv). All values are big-endian.
+        Raw integer = decoded_value × inverse_scale (e.g. volts × 10 = decivolts).
+        """
+        pt = bytearray(POSTGW_PLAINTEXT_SIZE)
+
+        # Device header (bytes 0x00–0x14): firmware-level constant
+        pt[0:DEVICE_HEADER_SIZE] = self._device_header
+
+        # Timestamp (0x15–0x1A): current HA local time
         now = dt_util.now()
         pt[TIMESTAMP_OFFSET:TIMESTAMP_OFFSET + TIMESTAMP_SIZE] = bytes([
             now.year - 2000, now.month, now.day,
             now.hour, now.minute, now.second,
         ])
-        pt[0x4D:0x4F] = struct.pack(">h", max(-32768, min(32767, pac_w)))
+
+        def _u16(offset: int, value: float) -> None:
+            struct.pack_into(">H", pt, offset, max(0, min(0xFFFF, round(value))))
+
+        def _i16(offset: int, value: float) -> None:
+            struct.pack_into(">h", pt, offset, max(-32768, min(32767, round(value))))
+
+        def _u32(offset: int, value: float) -> None:
+            struct.pack_into(">I", pt, offset, max(0, min(0xFFFFFFFF, round(value))))
+
+        # PV string voltages and currents (÷10 in goodwe → ×10 to raw)
+        _u16(_PT_vpv1,        data.get("vpv1",  0) * 10)
+        _u16(_PT_ipv1,        data.get("ipv1",  0) * 10)
+        _u16(_PT_vpv2,        data.get("vpv2",  0) * 10)
+        _u16(_PT_ipv2,        data.get("ipv2",  0) * 10)
+        _u16(_PT_vpv3,        data.get("vpv3",  0) * 10)
+        _u16(_PT_ipv3,        data.get("ipv3",  0) * 10)
+
+        # Grid voltages and currents (÷10 in goodwe → ×10 to raw)
+        _u16(_PT_vgrid1,      data.get("vgrid1", 0) * 10)
+        _u16(_PT_iac1,        data.get("igrid1", 0) * 10)
+        _u16(_PT_iac2,        data.get("igrid2", 0) * 10)
+
+        # Grid frequencies (÷100 in goodwe → ×100 to raw)
+        _u16(_PT_fac1,        data.get("fgrid1", 0) * 100)
+        _u16(_PT_fac3,        data.get("fgrid3", 0) * 100)
+
+        # Total inverter power (W ×1, signed)
+        _i16(_PT_pac,         data.get("total_inverter_power", 0))
+
+        # Temperature (÷10 in goodwe → ×10 to raw, signed)
+        _i16(_PT_temperature, data.get("temperature", 0) * 10)
+
+        # Energy today (÷10 in goodwe → ×10 to raw hectowatt-hours)
+        _u16(_PT_e_day,       data.get("e_day",   0) * 10)
+
+        # Total energy (÷10 in goodwe → ×10 to raw, 4 bytes)
+        _u32(_PT_e_total,     data.get("e_total", 0) * 10)
+
+        # Total hours (×1, fits in uint16)
+        _u16(_PT_h_total,     data.get("h_total", 0))
+
+        # DC bus voltage (÷10 in goodwe → ×10 to raw)
+        _u16(_PT_vbus,        data.get("vbus", 0) * 10)
+
         return bytes(pt)
-
-    async def _read_raw_running_data(self) -> bytes | None:
-        """Read raw running-data from inverter, padded to MODBUS_DATA_SIZE, or None on failure.
-
-        DT inverters return 146 bytes (73 registers). The remaining 73 bytes are padded
-        with the static DT tail constant (KNOWN_DT_PLAINTEXT_TAIL_HEX). Retries once
-        on failure in case the inverter is busy serving another poller.
-        """
-        for attempt in range(2):
-            try:
-                response = await self._inverter._read_from_socket(  # pylint: disable=protected-access
-                    self._inverter._READ_RUNNING_DATA  # pylint: disable=protected-access
-                )
-                raw = response.response_data()
-                if len(raw) < 10:
-                    _LOGGER.warning("Running data response too short: %d bytes", len(raw))
-                    return None
-                if len(raw) < MODBUS_DATA_SIZE:
-                    # Pad with the known static tail (NOT zeros).
-                    # Zero-padding causes SEMS to skip live pac/last_refresh_time
-                    # updates even while still ACKing the packet.
-                    tail = bytes.fromhex(KNOWN_DT_PLAINTEXT_TAIL_HEX)
-                    padding = tail[: MODBUS_DATA_SIZE - len(raw)]
-                    _LOGGER.debug(
-                        "Padding modbus response from %d to %d bytes with DT static tail",
-                        len(raw), MODBUS_DATA_SIZE,
-                    )
-                    raw = raw + padding
-                return raw
-            except Exception as ex:  # pylint: disable=broad-except
-                if attempt == 0:
-                    _LOGGER.debug("Read attempt 1 failed (%s), retrying in 2s", ex)
-                    await asyncio.sleep(2)
-                    self._inverter = None  # Force fresh connection for retry
-                    if not await self.async_connect():
-                        return None
-                else:
-                    _LOGGER.error("Failed to read inverter running data: %s", ex)
-                    return None
-
-    def _build_plaintext(self, raw_response: bytes) -> bytes:
-        """Build the 240-byte POSTGW plaintext: device_header(21) + modbus_data(219).
-
-        Overwrites the embedded 6-byte timestamp with the current HA-configured local time.
-        """
-        plaintext = bytearray(self._device_header + raw_response[:MODBUS_DATA_SIZE])
-        assert len(plaintext) == POSTGW_PLAINTEXT_SIZE
-
-        # Overwrite embedded timestamp with current HA-configured local time.
-        # dt_util.now() returns the HA timezone — not the container's UTC clock.
-        now = dt_util.now()
-        plaintext[TIMESTAMP_OFFSET:TIMESTAMP_OFFSET + TIMESTAMP_SIZE] = bytes([
-            now.year - 2000,
-            now.month,
-            now.day,
-            now.hour,
-            now.minute,
-            now.second,
-        ])
-        return bytes(plaintext)
 
     async def _ensure_sems_connection(self) -> bool:
         """Ensure the persistent TCP connection to SEMS is alive. Returns True if ready."""
