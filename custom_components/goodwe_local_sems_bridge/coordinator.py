@@ -9,8 +9,10 @@ connection. See README for full protocol details.
 from __future__ import annotations
 
 import asyncio
+import os
 import struct
 from datetime import datetime, timezone
+from pathlib import Path
 import logging
 from typing import Any
 
@@ -98,6 +100,11 @@ def _build_postgw_packet(plaintext: bytes, device_id: str, device_serial: str) -
     return bytes(packet)
 
 
+# Path within the HA config directory where the 240-byte plaintext template is stored.
+# Copy a captured file here: cp captures/inverter_plaintext_<N>.bin /config/goodwe_sems_plaintext_template.bin
+_TEMPLATE_PATH = "/config/goodwe_sems_plaintext_template.bin"
+
+
 class GoodweLocalSemsRelay:
     """Connects directly to the inverter, reads raw modbus data, syncs to SEMS."""
 
@@ -131,6 +138,13 @@ class GoodweLocalSemsRelay:
         self._sems_reader: asyncio.StreamReader | None = None
         self._sems_writer: asyncio.StreamWriter | None = None
 
+        # Captured 240-byte plaintext template: loaded asynchronously on first connect.
+        # When present, sync patches ONLY the timestamp and PAC bytes, which is
+        # the only reliable way to get SEMS to update the live pac/last_refresh_time
+        # display. Raw Modbus-constructed plaintexts fail SEMS's physical plausibility
+        # check (Power ≈ Voltage × Current) and are silently discarded.
+        self._plaintext_template: bytes | None = None
+
         # Latest decoded sensor values (for HA sensor entities)
         self.last_runtime_data: dict[str, Any] = {}
 
@@ -138,6 +152,10 @@ class GoodweLocalSemsRelay:
 
     async def async_connect(self) -> bool:
         """Establish connection to the inverter. Returns True on success."""
+        if self._plaintext_template is None:
+            self._plaintext_template = await self.hass.async_add_executor_job(
+                self._load_plaintext_template
+            )
         try:
             self._inverter = await goodwe_connect(
                 self._inverter_host,
@@ -179,13 +197,25 @@ class GoodweLocalSemsRelay:
                 pass  # Sensor data is secondary; don't fail the sync for it
 
             # ── Step 2: Build 240-byte plaintext ─────────────────────────────
-            plaintext = self._build_plaintext(raw_bytes)
+            # Prefer the captured template: patch only timestamp + PAC so SEMS
+            # receives physically-consistent sensor data and updates the live display.
+            # Fall back to Modbus construction only if no template is available.
+            pac_w: int | None = None
+            if self._plaintext_template is not None:
+                pac_w = int.from_bytes(raw_bytes[0x4D - DEVICE_HEADER_SIZE : 0x4F - DEVICE_HEADER_SIZE], "big", signed=True)
+                plaintext = self._build_plaintext_from_template(pac_w)
+                _LOGGER.debug("Using captured plaintext template (pac=%dW)", pac_w)
+            else:
+                plaintext = self._build_plaintext(raw_bytes)
+                pac_w = int.from_bytes(plaintext[0x4D:0x4F], "big", signed=True)
+                _LOGGER.warning(
+                    "No plaintext template found at %s — using Modbus-constructed plaintext. "
+                    "SEMS live display may not update. Run a MITM capture to generate a template.",
+                    _TEMPLATE_PATH,
+                )
 
             # ── Step 3: Build + send POSTGW packet ────────────────────────────
             packet = _build_postgw_packet(plaintext, self._device_id, self._device_serial)
-
-            # Read PAC directly from the plaintext we're about to send (plaintext[0x4D:0x4F])
-            pac_from_plaintext = int.from_bytes(plaintext[0x4D:0x4F], "big", signed=True)
 
             sent = await self._send_to_sems(packet)
             if sent:
@@ -201,7 +231,7 @@ class GoodweLocalSemsRelay:
                 _LOGGER.info(
                     "POSTGW packet sent to SEMS (sync #%d today, pac=%dW)",
                     self._sync_count,
-                    pac_from_plaintext,
+                    pac_w,
                 )
                 return True
             else:
@@ -225,6 +255,39 @@ class GoodweLocalSemsRelay:
         }
 
     # ── Private helpers ────────────────────────────────────────────────────────
+
+    def _load_plaintext_template(self) -> bytes | None:
+        """Load the 240-byte captured plaintext template from disk, if it exists."""
+        try:
+            data = Path(_TEMPLATE_PATH).read_bytes()
+            if len(data) == POSTGW_PLAINTEXT_SIZE:
+                _LOGGER.info("Loaded POSTGW plaintext template from %s", _TEMPLATE_PATH)
+                return data
+            _LOGGER.warning(
+                "Template at %s has wrong size %d (expected 240) — ignoring",
+                _TEMPLATE_PATH, len(data),
+            )
+        except FileNotFoundError:
+            _LOGGER.info(
+                "No plaintext template at %s — will use Modbus-constructed plaintext. "
+                "SEMS live display may not update until a template is installed.",
+                _TEMPLATE_PATH,
+            )
+        except OSError as exc:
+            _LOGGER.warning("Could not read plaintext template: %s", exc)
+        return None
+
+    def _build_plaintext_from_template(self, pac_w: int) -> bytes:
+        """Return the template with current timestamp and PAC patched in."""
+        assert self._plaintext_template is not None
+        pt = bytearray(self._plaintext_template)
+        now = dt_util.now()
+        pt[TIMESTAMP_OFFSET:TIMESTAMP_OFFSET + TIMESTAMP_SIZE] = bytes([
+            now.year - 2000, now.month, now.day,
+            now.hour, now.minute, now.second,
+        ])
+        pt[0x4D:0x4F] = struct.pack(">h", max(-32768, min(32767, pac_w)))
+        return bytes(pt)
 
     async def _read_raw_running_data(self) -> bytes | None:
         """Read raw running-data from inverter, padded to MODBUS_DATA_SIZE, or None on failure.
