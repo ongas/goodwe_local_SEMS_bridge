@@ -327,8 +327,8 @@ class GoodweLocalSemsRelay:
         # Reactive power (register 30135, 4 bytes, signed)
         _i32(_reg(30135), int(data.get("reactive_power", 0)))
 
-        # Power factor (register 30139)
-        _u16(_reg(30139), int(data.get("power_factor", 0)))
+        # Power factor (register 30139, library divides by 1000 on read → multiply back)
+        _u16(_reg(30139), int(data.get("power_factor", 0) * 1000))
 
         # Temperature (register 30141, ÷10 → ×10, signed)
         _i16(_reg(30141), data.get("temperature", 0) * 10)
