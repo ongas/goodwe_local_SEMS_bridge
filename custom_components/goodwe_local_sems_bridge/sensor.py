@@ -7,7 +7,7 @@ from typing import Any
 
 from homeassistant.components.sensor import RestoreSensor, SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -44,7 +44,7 @@ class InverterConnectionStatusSensor(SensorEntity):
 
     _attr_has_entity_name = True
     _attr_name = "Connection Status"
-    _attr_icon = "mdi:connection"
+    _attr_should_poll = True
 
     def __init__(self, relay: GoodweLocalSemsRelay, entry: ConfigEntry) -> None:
         self._relay = relay
@@ -57,7 +57,7 @@ class InverterConnectionStatusSensor(SensorEntity):
 
     @property
     def icon(self) -> str:
-        return "mdi:check-circle" if self.native_value == "Connected" else "mdi:alert-circle"
+        return "mdi:lan-connect" if self.native_value == "Connected" else "mdi:lan-disconnect"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
