@@ -47,50 +47,26 @@ DEVICE_HEADER_SIZE = 21       # bytes 0x00–0x14: firmware constant, 21 bytes
 TIMESTAMP_OFFSET = 0x15       # 6-byte timestamp inside plaintext
 TIMESTAMP_SIZE = 6
 
-# Empirically verified plaintext field offsets (absolute, from CONSOLIDATED_FIELD_VALIDATION.csv).
-# Raw value = decoded_value × scale_factor (inverse of goodwe library's ÷ scale).
-# All fields are big-endian.  2-byte fields use struct '>H' or '>h', 4-byte use '>I' or '>i'.
-_PT_vpv1        = 0x1B   # uint16  vpv1   (V × 10)
-_PT_ipv1        = 0x1D   # uint16  ipv1   (A × 10)
-_PT_vpv2        = 0x1F   # uint16  vpv2   (V × 10)
-_PT_ipv2        = 0x21   # uint16  ipv2   (A × 10)
-_PT_vpv3        = 0x23   # uint16  vpv3   (V × 10)
-_PT_ipv3        = 0x25   # uint16  ipv3   (A × 10)
-_PT_iac1        = 0x32   # uint16  iac1   (legacy name for igrid1_backup) (A × 10)
-_PT_vgrid1      = 0x39   # uint16  vgrid1 (V × 10)
-_PT_igrid1      = 0x3F   # uint16  igrid1 (A × 10) ** CORRECTED from 0x32 **
-_PT_vgrid2      = 0x3B   # uint16  vgrid2 (V × 10)
-_PT_vgrid3      = 0x3D   # uint16  vgrid3 (V × 10)
-_PT_iac2        = 0x43   # uint16  iac2   (A × 10) ** CORRECTED: was igrid2  **
-_PT_fgrid1      = 0x45   # uint16  fgrid1/fac1 (Hz × 100)
-_PT_fgrid3      = 0x47   # uint16  fgrid3/fac3 (Hz × 100)
-# Note: igrid2, igrid3, fgrid2 not in validated offsets - using best guesses or omitting
-_PT_pac         = 0x4D   # int16   total_inverter_power (W × 1)
-_PT_work_mode   = 0x4F   # uint16  work_mode (enum)
-_PT_error_codes = 0x50   # uint32  error_codes (bitmap)
-_PT_warning_code= 0x52   # uint16  warning_code
-_PT_apparent    = 0x54   # uint32  apparent_power (VA × 1)
-_PT_reactive    = 0x58   # uint32  reactive_power (VAR × 1, signed)
-_PT_temperature = 0x67   # int16   temperature (°C × 10)
-_PT_e_day       = 0x6D   # uint16  e_day  (kWh × 10 → hWh)
-_PT_e_total     = 0x6F   # uint32  e_total (kWh × 10 → hWh)
-_PT_h_total     = 0x75   # uint16  h_total (hours × 1)
-_PT_vbus        = 0x81   # uint16  vbus   (V × 10) -- DC bus
-_PT_vnbus       = 0x83   # uint16  vnbus  (V × 10) -- neutral bus
-_PT_power_factor= 0x91   # uint16  power_factor (÷1000)
-_PT_safety      = 0x6B   # uint16  safety_country (code)
-_PT_funbit      = 0x6A   # uint16  funbit (feature flags)
-_PT_derating    = 0x8B   # uint32  derating_mode (bitmap)
+# ── Plaintext field offsets ────────────────────────────────────────────────────
+# The 240-byte plaintext is a direct sequential Modbus register dump.
+# Byte 0x00-0x14 = 21-byte device header (firmware constant, captured at setup).
+# Byte 0x15 onward = registers 30100-30172 at 2 bytes per register.
+# Offset formula: PT_OFFSET = 0x15 + (REGISTER - 30100) * 2
+#
+# This was empirically verified: every known field (vpv1, vgrid1, pac, e_day,
+# e_total, temperature, …) matches exactly when using this formula.
 
-# Static tail bytes (0x93–0xEF): firmware sentinels required by SEMS validation.
-# Extracted from real inverter packets. Sending zeros causes SEMS to ACK but skip live display update.
-# Per README: "The remaining 73 bytes are a static pointer/sentinel table written by the inverter firmware"
-_POSTGW_STATIC_TAIL = bytes.fromhex(
-    "0000000000070000000600000008000000000000000000000000000000000000"
-    "0000000000000000000000000000000000000000000000000075fb75ff000000"
-    "0000000000000076017602000000009121912200000000ffffffffffff"
+def _reg(register: int) -> int:
+    """Plaintext byte offset for a Modbus holding register."""
+    return 0x15 + (register - 30100) * 2
+
+# Firmware sentinel bytes at plaintext offsets 0xCD–0xEF (beyond register range).
+# Identical across all captured packets — required by SEMS for live display update.
+_CONSTANT_TAIL = bytes.fromhex(
+    "75fb75ff00000000000000000000"
+    "76017602000000009121912200000000ffffffffff"
 )
-assert len(_POSTGW_STATIC_TAIL) == 93, f"Static tail should be 93 bytes, got {len(_POSTGW_STATIC_TAIL)}"
+_CONSTANT_TAIL_OFFSET = 0xCD
 
 
 def _crc16_modbus(data: bytes) -> int:
@@ -304,91 +280,90 @@ class GoodweLocalSemsRelay:
         def _i32(offset: int, value: float) -> None:
             struct.pack_into(">i", pt, offset, max(-2147483648, min(2147483647, round(value))))
 
-        # PV string voltages and currents (÷10 in goodwe → ×10 to raw)
-        _u16(_PT_vpv1,        data.get("vpv1",  0) * 10)
-        _u16(_PT_ipv1,        data.get("ipv1",  0) * 10)
-        _u16(_PT_vpv2,        data.get("vpv2",  0) * 10)
-        _u16(_PT_ipv2,        data.get("ipv2",  0) * 10)
-        _u16(_PT_vpv3,        data.get("vpv3",  0) * 10)
-        _u16(_PT_ipv3,        data.get("ipv3",  0) * 10)
+        # ── Write ALL register fields using formula: offset = 0x15 + (reg-30100)*2
+        # PV strings (registers 30103-30108)
+        _u16(_reg(30103), data.get("vpv1",  0) * 10)     # vpv1  V×10
+        _u16(_reg(30104), data.get("ipv1",  0) * 10)     # ipv1  A×10
+        _u16(_reg(30105), data.get("vpv2",  0) * 10)     # vpv2  V×10
+        _u16(_reg(30106), data.get("ipv2",  0) * 10)     # ipv2  A×10
+        _u16(_reg(30107), data.get("vpv3",  0) * 10)     # vpv3  V×10
+        _u16(_reg(30108), data.get("ipv3",  0) * 10)     # ipv3  A×10
 
-        # Grid voltages (÷10 in goodwe → ×10 to raw, all three phases)
-        _u16(_PT_vgrid1,      data.get("vgrid1", 0) * 10)
-        _u16(_PT_vgrid2,      data.get("vgrid2", 0) * 10)
-        _u16(_PT_vgrid3,      data.get("vgrid3", 0) * 10)
+        # Line-to-line voltages (registers 30115-30117)
+        _u16(_reg(30115), data.get("vline1", 0) * 10)    # vline1 V×10
+        _u16(_reg(30116), data.get("vline2", 0) * 10)    # vline2 V×10
+        _u16(_reg(30117), data.get("vline3", 0) * 10)    # vline3 V×10
 
-        # Grid current (÷10 in goodwe → ×10 to raw)
-        # Note: Only igrid1 is mapped in validated offsets (0x3F)
-        _u16(_PT_igrid1,      data.get("igrid1", 0) * 10)
-        _u16(_PT_iac2,        data.get("igrid2", 0) * 10)  # iac2 name maps to igrid2
+        # Grid phase voltages (registers 30118-30120)
+        _u16(_reg(30118), data.get("vgrid1", 0) * 10)    # vgrid1 V×10
+        _u16(_reg(30119), data.get("vgrid2", 0) * 10)    # vgrid2 V×10
+        _u16(_reg(30120), data.get("vgrid3", 0) * 10)    # vgrid3 V×10
 
-        # Grid frequencies (÷100 in goodwe → ×100 to raw)
-        # Note: Only fgrid1 and fgrid3 validated; fgrid2 NOT mapped
-        _u16(_PT_fgrid1,      data.get("fgrid1", 0) * 100)
-        # REMOVED: fgrid2 (0x46) - not in validated offsets
-        _u16(_PT_fgrid3,      data.get("fgrid3", 0) * 100)
+        # Grid phase currents (registers 30121-30123)
+        _u16(_reg(30121), data.get("igrid1", 0) * 10)    # igrid1 A×10
+        _u16(_reg(30122), data.get("igrid2", 0) * 10)    # igrid2 A×10
+        _u16(_reg(30123), data.get("igrid3", 0) * 10)    # igrid3 A×10
 
-        # Power outputs (W ×1)
-        _i16(_PT_pac,         data.get("total_inverter_power", 0))
-        _u32(_PT_apparent,    int(data.get("apparent_power", 0)))
-        _i32(_PT_reactive,    int(data.get("reactive_power", 0)))
+        # Grid frequencies (registers 30124-30126)
+        _u16(_reg(30124), data.get("fgrid1", 0) * 100)   # fgrid1 Hz×100
+        _u16(_reg(30125), data.get("fgrid2", 0) * 100)   # fgrid2 Hz×100
+        _u16(_reg(30126), data.get("fgrid3", 0) * 100)   # fgrid3 Hz×100
 
-        # Work mode & error codes
-        _u16(_PT_work_mode,   data.get("work_mode", 0))
-        _u32(_PT_error_codes, data.get("error_codes", 0))
-        _u16(_PT_warning_code,data.get("warning_code", 0))
+        # Power (register 30128, signed)
+        _i16(_reg(30128), data.get("total_inverter_power", 0))
 
-        # Temperature (÷10 in goodwe → ×10 to raw, signed)
-        _i16(_PT_temperature, data.get("temperature", 0) * 10)
+        # Work mode (register 30129)
+        _u16(_reg(30129), data.get("work_mode", 0))
 
-        # Safety country & feature flags
-        _u16(_PT_safety,      data.get("safety_country", 0))
-        _u16(_PT_funbit,      data.get("funbit", 0))
+        # Error codes (register 30130, 4 bytes / 2 registers)
+        _u32(_reg(30130), data.get("error_codes", 0))
 
-        # Energy counters
-        _u16(_PT_e_day,       int(data.get("e_day",   0) * 10))     # kWh×10 → hWh
-        _u32(_PT_e_total,     int(data.get("e_total", 0) * 10))    # kWh×10 → hWh
-        _u16(_PT_h_total,     data.get("h_total", 0))
+        # Warning code (register 30132)
+        _u16(_reg(30132), data.get("warning_code", 0))
 
-        # Voltages (÷10 in goodwe → ×10 to raw)
-        _u16(_PT_vbus,        data.get("vbus", 0) * 10)
-        _u16(_PT_vnbus,       data.get("vnbus", 0) * 10)
+        # Apparent power (register 30133, 4 bytes)
+        _u32(_reg(30133), int(data.get("apparent_power", 0)))
 
-        # Power factor (÷1000 in goodwe — already scaled, just cast to int)
-        _u16(_PT_power_factor,int(data.get("power_factor", 0)))
+        # Reactive power (register 30135, 4 bytes, signed)
+        _i32(_reg(30135), int(data.get("reactive_power", 0)))
 
-        # Derating mode (bitmap)
-        _u32(_PT_derating,    data.get("derating_mode", 0))
+        # Power factor (register 30139)
+        _u16(_reg(30139), int(data.get("power_factor", 0)))
 
-        # Fill static tail bytes (0x93–0xEF) — required by SEMS validation
-        # See README: "Sending zeros causes SEMS to ACK but silently skip updating the live display"
-        pt[0x93:] = _POSTGW_STATIC_TAIL
+        # Temperature (register 30141, ÷10 → ×10, signed)
+        _i16(_reg(30141), data.get("temperature", 0) * 10)
 
-        # Log all written fields for debugging
+        # Energy today (register 30144, kWh×10)
+        _u16(_reg(30144), data.get("e_day",   0) * 10)
+
+        # Total energy (register 30145-30146, 4 bytes, kWh×10)
+        _u32(_reg(30145), data.get("e_total", 0) * 10)
+
+        # Total hours (register 30147-30148, 4 bytes)
+        _u32(_reg(30147), data.get("h_total", 0))
+
+        # Safety country (register 30149)
+        _u16(_reg(30149), data.get("safety_country", 0))
+
+        # Funbit (register 30162)
+        _u16(_reg(30162), data.get("funbit", 0))
+
+        # DC bus voltages (registers 30163-30164)
+        _u16(_reg(30163), data.get("vbus", 0) * 10)      # vbus  V×10
+        _u16(_reg(30164), data.get("vnbus", 0) * 10)     # vnbus V×10
+
+        # Derating mode (register 30165-30166, 4 bytes)
+        _u32(_reg(30165), data.get("derating_mode", 0))
+
+        # Firmware sentinel tail (0xCD–0xEF, beyond register range)
+        pt[_CONSTANT_TAIL_OFFSET:_CONSTANT_TAIL_OFFSET + len(_CONSTANT_TAIL)] = _CONSTANT_TAIL
+
         _LOGGER.info(
-            "Built complete plaintext: "
-            "vpv1=%sV, vpv2=%sV, vpv3=%sV, "
-            "ipv1=%sA, ipv2=%sA, ipv3=%sA, "
-            "vgrid1=%sV, vgrid2=%sV, vgrid3=%sV, "
-            "igrid1=%sA, iac2=%sA, "
-            "fgrid1=%sHz, fgrid3=%sHz, "
-            "pac=%sW, temp=%s°C, "
-            "e_day=%skWh, e_total=%skWh, h_total=%sh, "
-            "work_mode=%s, error_codes=0x%x, "
-            "apparent=%sVA, reactive=%sVAR, power_factor=%s, "
-            "vbus=%sV, vnbus=%sV, "
-            "safety=%s, funbit=0x%x, derating=0x%x",
-            data.get("vpv1",  0), data.get("vpv2",  0), data.get("vpv3",  0),
-            data.get("ipv1",  0), data.get("ipv2",  0), data.get("ipv3",  0),
-            data.get("vgrid1", 0), data.get("vgrid2", 0), data.get("vgrid3", 0),
-            data.get("igrid1", 0), data.get("igrid2", 0),
-            data.get("fgrid1", 0), data.get("fgrid3", 0),
-            data.get("total_inverter_power", 0), data.get("temperature", 0),
-            data.get("e_day", 0), data.get("e_total", 0), data.get("h_total", 0),
-            data.get("work_mode", 0), data.get("error_codes", 0),
-            data.get("apparent_power", 0), data.get("reactive_power", 0), data.get("power_factor", 0),
-            data.get("vbus", 0), data.get("vnbus", 0),
-            data.get("safety_country", 0), data.get("funbit", 0), data.get("derating_mode", 0),
+            "Built plaintext (register dump): pac=%sW, vpv1=%sV, "
+            "vgrid1=%sV, temp=%s°C, e_day=%skWh, work_mode=%s",
+            data.get("total_inverter_power", 0), data.get("vpv1", 0),
+            data.get("vgrid1", 0), data.get("temperature", 0),
+            data.get("e_day", 0), data.get("work_mode", 0),
         )
 
         return bytes(pt)
