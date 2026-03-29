@@ -40,17 +40,32 @@ The POSTGW protocol was reverse-engineered via MITM capture of a GW25K-MT (DT fa
 
 ### Plaintext Layout (240 bytes)
 
+The 240-byte plaintext is a **direct sequential Modbus register dump** with a device header prefix.
+
 | Offset | Size | Content |
 |--------|------|---------|
 | 0x00 | 21 | Device header (firmware constant, not readable via Modbus) |
 | 0x15 | 6 | Timestamp (YY MM DD HH mm ss, inverter local time) |
-| 0x1B | 213 | Modbus data: 146 bytes live registers + 73 bytes static tail |
+| 0x1B | 178 | Modbus registers 30100–30172, sequential big-endian (2 or 4 bytes each) |
+| 0xCD | 35 | Firmware sentinel / pointer table (constant) |
+
+### Register-to-Offset Formula
+
+Every register in the plaintext follows a single formula:
+
+```
+PT_OFFSET = 0x15 + (REGISTER - 30100) × 2
+```
+
+For example, register **30128** (`pac`) → `0x15 + 28×2` = `0x15 + 0x38` = **0x4D**. Multi-register fields (e.g. `e_total` at 30145, Long/4 bytes) occupy the calculated offset plus the next 2 bytes.
 
 ### Key Findings
 
 **Device header (21 bytes):** A firmware-level constant prepended to every packet by the inverter firmware — not accessible via the Modbus/goodwe library. The DT-family constant is embedded in this integration and applied automatically. The config flow captures it during setup so other families can be supported.
 
-**Static tail bytes (73 bytes):** DT inverters return only 146 bytes (73 registers) from `_READ_RUNNING_DATA`. The POSTGW plaintext requires 219 bytes of Modbus data. The remaining 73 bytes are a static pointer/sentinel table written by the inverter firmware. **Sending zeros here causes SEMS to ACK the packet and accumulate `eDay` but silently skip updating the live display (`pac` / `last_refresh_time`).** The correct bytes are embedded in this integration.
+**Register mapping:** The Modbus data region (offsets 0x15–0xCC) is a direct sequential dump of registers 30100–30172. The offset for any register is `0x15 + (register - 30100) * 2`. This was verified by comparing real MITM captures against the goodwe library's DT register definitions — every field matches.
+
+**Firmware sentinel tail (35 bytes at 0xCD–0xEF):** The last 35 bytes of the plaintext are a constant pointer/sentinel table written by the inverter firmware, not corresponding to readable Modbus registers. **Sending zeros here causes SEMS to ACK the packet and accumulate `eDay` but silently skip updating the live display (`pac` / `last_refresh_time`).** The correct bytes are embedded in this integration.
 
 **Persistent TCP connection:** SEMS only updates the live `pac` and `last_refresh_time` display while the TCP connection to `tcp.goodwe-power.com:20001` remains open. Opening a new connection per packet causes SEMS to accept packets but not refresh the live status. This integration maintains a persistent connection with automatic reconnection on EOF.
 
