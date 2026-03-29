@@ -1,29 +1,9 @@
 """SEMS relay coordinator for the GoodWe Local SEMS Bridge integration.
 
-Architecture
-------------
-1. Connect to the inverter directly via the ``goodwe`` Python library.
-2. Every sync cycle, call ``inverter._read_from_socket(_READ_RUNNING_DATA)``
-   to obtain the raw trimmed modbus response.
-3. Construct the 240-byte POSTGW plaintext:
-       plaintext = device_header(21) + modbus_data(219)
-   The 21-byte device header is a constant per inverter firmware version,
-   captured once during config-flow setup.
-4. Update the 6-byte embedded timestamp at plaintext[0x15:0x1B] to now
-   (local time, matching what the inverter firmware embeds).
-5. Build the 294-byte POSTGW packet (AES-128-CBC + CRC-16 Modbus) and
-   send it to tcp.goodwe-power.com:20001.
-
-DT-family plaintext size (confirmed):
-  DT inverters (e.g. GW25K-MT) return 146 bytes (73 registers × 2) from
-  _READ_RUNNING_DATA (register 0x7594, count 0x49). The 240-byte POSTGW
-  plaintext needs 219 bytes of modbus data; the remaining 73 bytes are
-  filled with KNOWN_DT_PLAINTEXT_TAIL_HEX from const.py — a static
-  pointer/sentinel table that is identical across all captured packets for
-  this inverter model. Zero-padding those bytes causes SEMS to ACK the
-  packet but silently refuse to update the live pac / last_refresh_time
-  display (verified March 2026). GoodWe inverters of other families (e.g.
-  DNS G3 / ET series) send larger plaintexts using the same protocol.
+Reads raw Modbus running-data from the inverter, constructs a 240-byte
+POSTGW plaintext, encrypts it (AES-128-CBC, key=0xFF×16), and sends the
+294-byte packet to tcp.goodwe-power.com:20001 over a persistent TCP
+connection. See README for full protocol details.
 """
 
 from __future__ import annotations
@@ -56,18 +36,10 @@ POSTGW_HEADER = b"POSTGW"
 POSTGW_PACKET_TYPE = 0x0104
 POSTGW_ENCRYPTION_KEY = bytes([0xFF] * 16)
 
-# DT-family POSTGW plaintext layout (240 bytes, confirmed from MITM captures):
-#   [0x00:0x15]  21 bytes  device header (constant per firmware, not readable via modbus)
-#   [0x15:0x1B]   6 bytes  embedded timestamp (YY MM DD HH mm ss, local time)
-#   [0x1B:0xEF] 213 bytes  modbus sensor data (registers 0x7596+)
-#   Total plaintext           = 240 bytes = 15 × 16 (AES block size)
-#
-# DT inverters (_READ_RUNNING_DATA) return 146 bytes (73 registers × 2,
-# regs 0x7594–0x75DC).  The remaining 73 bytes (plaintext[167:240],
-# regs 0x75DD–0x7601) must be filled with KNOWN_DT_PLAINTEXT_TAIL_HEX —
-# a static pointer/sentinel table written by the inverter firmware.
-# Zero-padding this section causes SEMS to silently skip updating the live
-# pac / last_refresh_time display (even though it still ACKs the packet).
+# POSTGW plaintext layout (240 bytes = 15 AES blocks):
+#   [0x00:0x15]  21 bytes  device header (firmware constant, captured at setup)
+#   [0x15:0x1B]   6 bytes  timestamp (YY MM DD HH mm ss, local time)
+#   [0x1B:0xEF] 213 bytes  modbus data: 146 bytes live registers + 73 bytes static tail
 POSTGW_PLAINTEXT_SIZE = 240
 DEVICE_HEADER_SIZE = 21       # bytes 0x00–0x14: firmware constant, 21 bytes
 MODBUS_DATA_SIZE = 219        # bytes 0x15–0xEF: 146 real (DT) + 73 zero-padded
@@ -96,20 +68,7 @@ def _aes_encrypt(plaintext: bytes, iv: bytes) -> bytes:
 
 
 def _build_postgw_packet(plaintext: bytes, device_id: str, device_serial: str) -> bytes:
-    """Build a complete 294-byte POSTGW packet from a 240-byte plaintext.
-
-    Packet layout (verified against submit_synthetic_loop.py):
-      0-5    POSTGW header (6)
-      6-9    Length uint32-BE = 281 (6)
-      10-11  Type 0x0104 (2)
-      12-13  0x0000 padding (2)
-      14-21  Device ID, 8 bytes ASCII null-padded (8)
-      22-29  Device Serial, 8 bytes ASCII null-padded (8)
-      30-45  IV = timestamp(6) + 10 zero bytes (16)
-      46-51  Envelope timestamp, same 6 bytes (6)
-      52-291 Ciphertext (240)
-      292-293 CRC-16 Modbus over bytes [0:292] (2)
-    """
+    """Build a complete 294-byte POSTGW packet from a 240-byte plaintext."""
     assert len(plaintext) == POSTGW_PLAINTEXT_SIZE
 
     # IV = timestamp bytes from plaintext[0x15:0x1B] + 10 zeros
@@ -167,10 +126,8 @@ class GoodweLocalSemsRelay:
         self._sync_count: int = 0
         self._sync_count_date: str = ""  # date string for daily reset
 
-        # Persistent TCP connection to SEMS cloud
-        # SEMS only updates the live pac/last_refresh_time display while the
-        # TCP connection stays open (verified March 2026). A new connection
-        # per packet causes SEMS to accept energy data but not live status.
+        # Persistent TCP connection: SEMS only updates the live display while the
+        # session remains open. A new connection per packet silently drops live updates.
         self._sems_reader: asyncio.StreamReader | None = None
         self._sems_writer: asyncio.StreamWriter | None = None
 
@@ -230,7 +187,7 @@ class GoodweLocalSemsRelay:
             # Read PAC directly from the plaintext we're about to send (plaintext[0x4D:0x4F])
             pac_from_plaintext = int.from_bytes(plaintext[0x4D:0x4F], "big", signed=True)
 
-            sent = await self._send_to_sems(packet, plaintext)
+            sent = await self._send_to_sems(packet)
             if sent:
                 self._last_sems_sync = datetime.now(timezone.utc)
                 self._sems_sync_failed = False
@@ -270,15 +227,11 @@ class GoodweLocalSemsRelay:
     # ── Private helpers ────────────────────────────────────────────────────────
 
     async def _read_raw_running_data(self) -> bytes | None:
-        """Read raw running-data bytes from inverter. Returns data padded to MODBUS_DATA_SIZE or None.
+        """Read raw running-data from inverter, padded to MODBUS_DATA_SIZE, or None on failure.
 
-        DT-family inverters (25KMT etc.) return 146 bytes (73 registers × 2).
-        The POSTGW plaintext needs 219 bytes of modbus data. The missing 73 bytes
-        are mostly zeros in real captures (static register pointers + 0xFF sentinels)
-        and are not validated by SEMS for physical plausibility. Zero-pad them.
-
-        If the inverter rejects the read (busy — likely the official goodwe integration
-        just polled it), wait 2 seconds and retry once before giving up.
+        DT inverters return 146 bytes (73 registers). The remaining 73 bytes are padded
+        with the static DT tail constant (KNOWN_DT_PLAINTEXT_TAIL_HEX). Retries once
+        on failure in case the inverter is busy serving another poller.
         """
         for attempt in range(2):
             try:
@@ -289,13 +242,10 @@ class GoodweLocalSemsRelay:
                 if len(raw) < 10:
                     _LOGGER.warning("Running data response too short: %d bytes", len(raw))
                     return None
-                        # DT inverters return 146 bytes (73 registers); zero-pad to 219.
-                # The trailing 73 bytes are structurally unused by SEMS for DT hardware —
-                # confirmed safe by A/B test (March 2026).
                 if len(raw) < MODBUS_DATA_SIZE:
-                    # Pad with the known static tail bytes (NOT zeros).
+                    # Pad with the known static tail (NOT zeros).
                     # Zero-padding causes SEMS to skip live pac/last_refresh_time
-                    # updates even though it still ACKs the packet.
+                    # updates even while still ACKing the packet.
                     tail = bytes.fromhex(KNOWN_DT_PLAINTEXT_TAIL_HEX)
                     padding = tail[: MODBUS_DATA_SIZE - len(raw)]
                     _LOGGER.debug(
@@ -316,25 +266,16 @@ class GoodweLocalSemsRelay:
                     return None
 
     def _build_plaintext(self, raw_response: bytes) -> bytes:
-        """Build the 240-byte POSTGW plaintext.
+        """Build the 240-byte POSTGW plaintext: device_header(21) + modbus_data(219).
 
-        plaintext = device_header(21) + raw_response[:219]
-
-        The device header (0x00–0x14) is the 21-byte constant learned at setup.
-        raw_response[0:6]   = registers 35100–35102 = inverter-embedded timestamp
-        raw_response[6:219] = registers 35103+ = all sensor data
-
-        We then refresh the 6-byte timestamp at plaintext[0x15] with the current
-        local time to ensure SEMS doesn't reject stale timestamps.
+        Overwrites the embedded 6-byte timestamp with the current HA-configured local time.
         """
         plaintext = bytearray(self._device_header + raw_response[:MODBUS_DATA_SIZE])
         assert len(plaintext) == POSTGW_PLAINTEXT_SIZE
 
-        # Overwrite timestamp at 0x15 with current local time (HA configured timezone)
-        # Must use dt_util.now() not datetime.now() — the Docker container runs UTC but
-        # SEMS expects the inverter's local solar time (e.g. AEDT), matching what the
-        # inverter firmware itself embeds.
-        now = dt_util.now()  # Returns datetime in HA's configured timezone
+        # Overwrite embedded timestamp with current HA-configured local time.
+        # dt_util.now() returns the HA timezone — not the container's UTC clock.
+        now = dt_util.now()
         plaintext[TIMESTAMP_OFFSET:TIMESTAMP_OFFSET + TIMESTAMP_SIZE] = bytes([
             now.year - 2000,
             now.month,
@@ -372,30 +313,12 @@ class GoodweLocalSemsRelay:
             self._sems_reader = None
             self._sems_writer = None
 
-    async def _send_to_sems(
-        self, packet: bytes, plaintext: bytes  # noqa: ARG002
-    ) -> bool:
+    async def _send_to_sems(self, packet: bytes) -> bool:
         """Send packet on the persistent SEMS TCP connection and verify the ACK.
 
-        Maintains a long-lived TCP connection across syncs.  SEMS only updates
-        the live pac / last_refresh_time display while the connection is open —
-        a new connection per packet causes SEMS to silently drop live updates
-        (verified March 2026).
-
-        SEMS responds with a 58-byte ACK packet (header "GW", not "POSTGW"):
-          [0:2]   = b"GW"
-          [2:6]   = length (uint32 BE)
-          [6:8]   = packet type (0x0104)
-          [8:16]  = device ID (8 bytes ASCII)
-          [16:24] = device serial (8 bytes ASCII)
-          [24:30] = server timestamp (6 bytes: sec,min,hour,day,month,year-2000)
-          [30:40] = 10 zero bytes (completing 16-byte IV)
-          [40:56] = AES-128-CBC encrypted 16-byte payload
-          [56:58] = CRC-16 LE
-
-        Decrypting ack[40:56] with IV=ack[24:40] and key=0xFF*16:
-          all-zeros  → ACK (accepted)
-          0x02+zeros → NACK (rejected)
+        SEMS ACK format (58 bytes, header b"GW"):
+          [24:40] IV = server timestamp(6) + zeros(10)
+          [40:56] AES-128-CBC payload: all-zeros = ACK, 0x02+zeros = NACK
         """
         # Try to use existing connection, reconnect once on failure.
         for attempt in range(2):

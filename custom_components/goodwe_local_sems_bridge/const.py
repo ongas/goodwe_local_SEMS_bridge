@@ -16,35 +16,19 @@ CONF_INVERTER_PORT = "inverter_port"
 CONF_MODEL_FAMILY = "model_family"
 CONF_DEVICE_HEADER = "device_header"  # 21-byte fixed header (hex string), set at setup
 
-# Known device header for GoodWe DT family (e.g. GW25K-MT).
-# These 21 bytes are prepended by inverter firmware to every POSTGW plaintext packet.
-# They are NOT readable via modbus/the goodwe library — firmware-level only.
-# Sourced from MITM captures of a GW25K-MT (SN: REDACTED).
-# Other DT models within the same firmware generation use the same bytes.
+# 21-byte POSTGW plaintext prefix prepended by DT-family inverter firmware.
+# Not readable via Modbus — captured via MITM from a GW25K-MT.
+# Other DT models in the same firmware generation use identical bytes.
 KNOWN_DT_DEVICE_HEADER_HEX = "067552755704570000000e000001310001759475c5"
 
-# Known POSTGW plaintext tail for GoodWe DT family (bytes 167–239, 73 bytes).
+# Static 73-byte tail for DT-family POSTGW plaintext (bytes 167–239).
 #
-# DT inverters (_READ_RUNNING_DATA) only return 73 registers (146 bytes, regs
-# 0x7594–0x75DC).  The 240-byte POSTGW plaintext needs 219 bytes of modbus data,
-# so the remaining 73 bytes (regs 0x75DD–0x7601) MUST be filled with the correct
-# static hardware structure — NOT zeros.
+# DT inverters return only 146 bytes from _READ_RUNNING_DATA (regs 0x7594–0x75DC).
+# The 240-byte plaintext requires 219 bytes of Modbus data, so the remaining
+# 73 bytes must be filled with this constant firmware-level pointer/sentinel table.
 #
-# These 73 bytes are a constant pointer/sentinel table written by the inverter
-# firmware.  They have been verified identical across every MITM-captured packet
-# for this inverter model (GW25K-MT, March 2026).  Sending zeros instead causes
-# SEMS to accept the packet (ACK received) and accumulate energy (eDay updates),
-# but silently refuses to update the live display (pac / last_refresh_time).
-#
-# Key non-zero positions (register : value):
-#   0x75F0 → 0x75FB  (pointer to data word 1)
-#   0x75F1 → 0x75FF  (pointer to data word 2)
-#   0x75F7 → 0x7601  (pointer to data word 3)
-#   0x75F8 → 0x7602  (pointer to data word 4)
-#   0x75FB → 0x9121  (data — lifetime energy accumulator, high word)
-#   0x75FC → 0x9122  (data — lifetime energy accumulator, low word)
-#   0x75FF → 0xFFFF  (end-of-table sentinel)
-#   0x7600 → 0xFFFF  (end-of-table sentinel)
+# IMPORTANT: Sending zeros here causes SEMS to ACK the packet and accumulate
+# energy (eDay) but silently skip updating the live display (pac / last_refresh_time).
 KNOWN_DT_PLAINTEXT_TAIL_HEX = (
     "000000000000000000000000000000000000000000000000"
     "000000000000000000000000000075fb75ff000000000000"
