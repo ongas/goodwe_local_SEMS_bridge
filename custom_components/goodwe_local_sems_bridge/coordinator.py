@@ -353,7 +353,7 @@ class GoodweLocalSemsRelay:
             self._sems_reader, self._sems_writer = await asyncio.open_connection(
                 SEMS_CLOUD_HOST, SEMS_CLOUD_PORT
             )
-            _LOGGER.debug("Opened persistent SEMS TCP connection")
+            _LOGGER.info("Opened persistent SEMS TCP connection")
             return True
         except Exception as ex:  # pylint: disable=broad-except
             _LOGGER.error("Failed to connect to SEMS: %s", ex)
@@ -408,6 +408,14 @@ class GoodweLocalSemsRelay:
                 await self._sems_writer.drain()
                 try:
                     ack = await asyncio.wait_for(self._sems_reader.read(256), timeout=5.0)
+                    if not ack:
+                        # EOF: SEMS closed the connection from its end
+                        _LOGGER.info("SEMS connection closed by server (EOF) — reconnecting")
+                        await self._close_sems_connection()
+                        if attempt == 0:
+                            continue
+                        _LOGGER.error("SEMS connection dropped after send")
+                        return False
                     if len(ack) >= 58:
                         iv = ack[24:40]
                         try:
@@ -426,10 +434,10 @@ class GoodweLocalSemsRelay:
                         except Exception:  # pylint: disable=broad-except
                             _LOGGER.debug("SEMS ACK received but decrypt failed (raw: %s)", ack.hex())
                     else:
-                        _LOGGER.debug("SEMS ACK received (%d bytes, raw: %s)", len(ack), ack.hex())
+                    _LOGGER.debug("SEMS ACK received (%d bytes, raw: %s)", len(ack), ack.hex())
                     return True
                 except asyncio.TimeoutError:
-                    _LOGGER.debug("No SEMS ACK (timeout) — packet likely accepted")
+                    _LOGGER.debug("No SEMS ACK (5s timeout) — assuming accepted")
                     return True
             except Exception as ex:  # pylint: disable=broad-except
                 _LOGGER.debug("SEMS send failed on attempt %d: %s", attempt + 1, ex)
