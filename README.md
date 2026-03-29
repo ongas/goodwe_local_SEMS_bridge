@@ -57,7 +57,7 @@ Every register in the plaintext follows a single formula:
 PT_OFFSET = 0x15 + (REGISTER - 30100) × 2
 ```
 
-For example, register **30128** (`pac`) → `0x15 + 28×2` = `0x15 + 0x38` = **0x4D**. Multi-register fields (e.g. `e_total` at 30145, Long/4 bytes) occupy the calculated offset plus the next 2 bytes.
+For example, register **30128** (`ppv`, PV DC power) → `0x15 + 28×2` = `0x15 + 0x38` = **0x4D**. Multi-register fields (e.g. `e_total` at 30145, Long/4 bytes) occupy the calculated offset plus the next 2 bytes.
 
 ### Key Findings
 
@@ -67,7 +67,9 @@ For example, register **30128** (`pac`) → `0x15 + 28×2` = `0x15 + 0x38` = **0
 
 **Firmware sentinel tail (35 bytes at 0xCD–0xEF):** The last 35 bytes of the plaintext are a constant pointer/sentinel table written by the inverter firmware, not corresponding to readable Modbus registers. **Sending zeros here causes SEMS to ACK the packet and accumulate `eDay` but silently skip updating the live display (`pac` / `last_refresh_time`).** The correct bytes are embedded in this integration.
 
-**Persistent TCP connection:** SEMS only updates the live `pac` and `last_refresh_time` display while the TCP connection to `tcp.goodwe-power.com:20001` remains open. Opening a new connection per packet causes SEMS to accept packets but not refresh the live status. This integration maintains a persistent connection with automatic reconnection on EOF.
+**Persistent TCP connection:** SEMS only updates the live display (`output_power` / `last_refresh_time`) while the TCP connection to `tcp.goodwe-power.com:20001` remains open. Opening a new connection per packet causes SEMS to accept packets but not refresh the live status. This integration maintains a persistent connection with automatic reconnection on EOF.
+
+**Register 30128 (ppv):** Contains the total PV DC output power (sum of vpv×ipv across all strings), not AC grid power. This is the value displayed by the official GoodWe integration as "PV Power" and matches user expectations for "current generation."
 
 **Energy plausibility check:** SEMS performs a server-side sanity check — if `e_day` in a new packet is lower than what SEMS already holds for that day, it ACKs the packet but skips the live display update. Under normal operation `e_day` only increases throughout the day, so this is not an issue. It can become apparent after testing with synthetic data from a different day.
 
