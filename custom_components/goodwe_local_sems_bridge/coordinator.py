@@ -434,7 +434,7 @@ class GoodweLocalSemsRelay:
                         except Exception:  # pylint: disable=broad-except
                             _LOGGER.debug("SEMS ACK received but decrypt failed (raw: %s)", ack.hex())
                     else:
-                    _LOGGER.debug("SEMS ACK received (%d bytes, raw: %s)", len(ack), ack.hex())
+                        _LOGGER.debug("SEMS ACK received (%d bytes, raw: %s)", len(ack), ack.hex())
                     return True
                 except asyncio.TimeoutError:
                     _LOGGER.debug("No SEMS ACK (5s timeout) — assuming accepted")
