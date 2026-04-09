@@ -8,10 +8,10 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_DEVICE_HEADER, CONF_DEVICE_ID, CONF_DEVICE_SERIAL, CONF_INVERTER_HOST, DOMAIN
+from .const import CONF_GOODWE_ENTRY_ID, CONF_SEMS_STATION_ID, CONF_SEMS_USERNAME, DOMAIN
 from .coordinator import GoodweLocalSemsRelay
 
-_TO_REDACT = {CONF_INVERTER_HOST, CONF_DEVICE_ID, CONF_DEVICE_SERIAL}
+_TO_REDACT = {CONF_SEMS_USERNAME, CONF_SEMS_STATION_ID}
 
 
 async def async_get_config_entry_diagnostics(
@@ -22,17 +22,14 @@ async def async_get_config_entry_diagnostics(
 
     data: dict[str, Any] = {
         "config": {
-            "inverter_host": entry.data.get(CONF_INVERTER_HOST),
-            "device_id": entry.data.get(CONF_DEVICE_ID),
-            "device_serial": entry.data.get(CONF_DEVICE_SERIAL),
-            "device_header": entry.data.get(CONF_DEVICE_HEADER),
+            "goodwe_entry_id": entry.data.get(CONF_GOODWE_ENTRY_ID),
+            "sems_station_id": entry.data.get(CONF_SEMS_STATION_ID),
+            "sync_to_cloud": entry.data.get("sync_to_cloud", True),
         },
         "sync_status": {
             "last_sync": relay._last_sems_sync.isoformat() if relay._last_sems_sync else None,
-            "sync_count": relay._sync_count,
-            "last_sync_failed": relay._sems_sync_failed,
-            "last_error": relay._last_error,
+            "sync_failed": relay._sems_sync_failed,
+            "api_initialized": relay._sems_api is not None,
         },
-        "runtime_data_keys": list(relay.last_runtime_data.keys()),
     }
     return async_redact_data(data, _TO_REDACT)
