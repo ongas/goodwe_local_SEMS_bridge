@@ -1,3 +1,12 @@
+# v2.3.1 - Critical Diagnostics Import Fix
+
+## Bug Fixes
+- **CRITICAL**: Fixed blocking import error in diagnostics module that prevented Home Assistant from loading the integration
+- Updated diagnostics to use correct configuration constants from refactored config flow
+- Removed references to deprecated device configuration fields
+
+---
+
 # v2.3.0 - Integration Refactor & Configuration Simplification
 
 ## What's New
