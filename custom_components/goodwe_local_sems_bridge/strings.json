@@ -3,26 +3,39 @@
     "step": {
       "user": {
         "title": "GoodWe Local SEMS Bridge",
-        "description": "Enter the IP address of your GoodWe inverter. The inverter will be contacted to verify the connection and read its device information.",
+        "description": "Select the GoodWe integration to sync with SEMS",
         "data": {
-          "inverter_host": "Inverter IP address",
-          "inverter_port": "Port (default 8899)"
+          "goodwe_entry_id": "GoodWe Integration"
         },
         "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md"
       },
-      "confirm": {
-        "title": "Confirm Inverter",
-        "description": "Found inverter **{model}** (S/N: {serial}) at {host}.\n\nConfirm to complete setup. The integration will connect directly to your inverter and relay its data to the SEMS portal every 60 seconds.",
-        "data": {}
+      "sems_credentials": {
+        "title": "SEMS API Credentials",
+        "description": "Enter your SEMS API credentials",
+        "data": {
+          "username": "SEMS Username",
+          "password": "SEMS Password",
+          "sems_station_id": "SEMS Station ID"
+        },
+        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
+      },
+      "sync_settings": {
+        "title": "Cloud Sync Settings",
+        "description": "Enable or disable cloud synchronization",
+        "data": {
+          "sync_to_cloud": "Sync to Goodwe Cloud"
+        },
+        "data_description": {
+          "sync_to_cloud": "Enable syncing data to Goodwe SEMS cloud at the factory default 60-second interval."
+        },
+        "help_url": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md#setup"
       }
     },
     "abort": {
-      "already_configured": "This inverter is already configured.",
-      "cannot_read_header": "Connected to the inverter but could not read device data. Try again."
+      "no_goodwe_integration": "No GoodWe integration found. Please set up the GoodWe integration first."
     }
   },
   "error": {
-    "cannot_connect": "Unable to connect to inverter. Check the IP address and ensure the inverter is reachable.",
-    "cannot_read_header": "Connected to the inverter but could not read its data. Try again."
+    "sems_auth_failed": "Failed to authenticate with SEMS API. Please check your credentials."
   }
 }
