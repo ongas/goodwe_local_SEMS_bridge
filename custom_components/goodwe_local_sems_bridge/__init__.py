@@ -32,8 +32,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     goodwe_entry_id = entry.data.get(CONF_GOODWE_ENTRY_ID)
     goodwe_entries = hass.config_entries.async_entries("goodwe")
     
-    if not any(e.entry_id == goodwe_entry_id for e in goodwe_entries):
-        raise ConfigEntryNotReady("Goodwe integration not found")
+    goodwe_entry = next(
+        (e for e in goodwe_entries if e.entry_id == goodwe_entry_id),
+        None,
+    )
+    
+    if not goodwe_entry:
+        # If no goodwe integration exists at all, provide helpful error message
+        if not goodwe_entries:
+            _LOGGER.error(
+                "GoodWe Local SEMS Bridge setup failed: The GoodWe integration is not configured. "
+                "Please install and configure the GoodWe integration first."
+            )
+        else:
+            _LOGGER.error(
+                "GoodWe Local SEMS Bridge setup failed: The configured GoodWe integration (ID: %s) "
+                "is no longer available. Please reconfigure this integration.",
+                goodwe_entry_id,
+            )
+        raise ConfigEntryNotReady("GoodWe integration not found or not yet loaded")
 
     # Create the relay
     sync_to_cloud = entry.data.get(CONF_SYNC_TO_CLOUD, True)

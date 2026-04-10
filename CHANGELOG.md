@@ -1,3 +1,12 @@
+# v2.3.2 - Improved Dependency Error Messages
+
+## Improvements
+- **Better Error Messages**: Now clearly indicates when the GoodWe integration is missing or not yet loaded
+- **Setup Debugging**: Detailed log messages help users understand what configuration is needed
+- Distinguishes between "GoodWe integration not installed" vs "configured GoodWe entry was removed"
+
+---
+
 # v2.3.1 - Critical Diagnostics Import Fix
 
 ## Bug Fixes
