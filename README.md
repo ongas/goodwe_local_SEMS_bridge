@@ -1,85 +1,152 @@
 # GoodWe Local SEMS Bridge
 
-A Home Assistant custom integration that syncs GoodWe inverter data, using a local Modbus connection, to Goodwe SEMS.
+A Home Assistant custom integration that reads live inverter data directly via local Modbus and relays it to the GoodWe SEMS cloud using the native POSTGW protocol — keeping your SEMS dashboard updated without relying on the inverter's WiFi module to phone home.
 
-## Features
+## Why This Exists
 
-- 📡 **Local Data Source**: Reads real-time data from your GoodWe inverter via modbus
-- ☁️ **Cloud Sync**: Automatically syncs inverter data to Goodwe's SEMS cloud
-- ⚡ **Efficient**: Syncs once per minute, non-blocking operation
-- 🔄 **Reliable**: SEMS sync failures never affect local operation
-- 🛡️ **Safe**: Acts as a simple relay/bridge, doesn't modify any behavior in HA
+GoodWe inverters communicate with SEMS using a proprietary encrypted TCP protocol called **POSTGW**. When you use the local Modbus integration (port 8899) instead of the inverter's built-in cloud path, SEMS stops receiving updates and your dashboard goes stale.
 
-## Problem It Solves
+This integration bridges the gap:
+1. Reads live sensor data directly from the inverter via Modbus
+2. Builds and encrypts a valid POSTGW packet
+3. Sends it to `tcp.goodwe-power.com:20001` every 60 seconds
 
-This integration solves a common issue with GoodWe inverters:
-- The **official modbus integration** reads data locally (fast, no cloud latency) but stops SEMS from being updated
-- The **SEMS API integration** retrieves from cloud but laggy due to lengthy round-trips, preventing it from being used for near-real-time integration requirements
-- This bridge allows you to keep your local Modbus integration (eg the official GoodWe HA Integration), and keeps SEMS updated.
+No SEMS credentials required — the integration authenticates using the inverter's own serial number, exactly as the inverter firmware does.
 
+## Protocol Reference
 
-## Requirements
+The POSTGW protocol was reverse-engineered via MITM capture of a GW25K-MT (DT family). Below are the key findings.
 
-- Your Inverter Device S/N
+### Packet Structure (294 bytes)
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 6 | Magic: `POSTGW` |
+| 6 | 4 | Length: `281` (uint32 BE) |
+| 10 | 2 | Type: `0x0104` (uint16 BE) |
+| 12 | 2 | Padding: `0x0000` |
+| 14 | 8 | Device ID (bytes 0–7 of serial number, ASCII) |
+| 22 | 8 | Device Serial (bytes 8–15 of serial number, ASCII) |
+| 30 | 16 | IV: 6-byte local timestamp + 10 zero bytes |
+| 46 | 6 | Envelope timestamp (same 6 bytes) |
+| 52 | 240 | Ciphertext (AES-128-CBC) |
+| 292 | 2 | CRC-16 Modbus over bytes 0–291 (uint16 BE) |
+
+### Encryption
+
+- **Algorithm**: AES-128-CBC
+- **Key**: `0xFF × 16` (all 255s — hardcoded in GoodWe firmware)
+- **IV**: `timestamp_bytes(6) + zeros(10)`
+
+### Plaintext Layout (240 bytes)
+
+The 240-byte plaintext is a **direct sequential Modbus register dump** with a device header prefix.
+
+| Offset | Size | Content |
+|--------|------|---------|
+| 0x00 | 21 | Device header (firmware constant, not readable via Modbus) |
+| 0x15 | 6 | Timestamp (YY MM DD HH mm ss, inverter local time) |
+| 0x1B | 178 | Modbus registers 30100–30172, sequential big-endian (2 or 4 bytes each) |
+| 0xCD | 35 | Firmware sentinel / pointer table (constant) |
+
+### Register-to-Offset Formula
+
+Every register in the plaintext follows a single formula:
+
+```
+PT_OFFSET = 0x15 + (REGISTER - 30100) × 2
+```
+
+For example, register **30128** (`ppv`, PV DC power) → `0x15 + 28×2` = `0x15 + 0x38` = **0x4D**. Multi-register fields (e.g. `e_total` at 30145, Long/4 bytes) occupy the calculated offset plus the next 2 bytes.
+
+### Key Findings
+
+**Device header (21 bytes):** A firmware-level constant prepended to every packet by the inverter firmware — not accessible via the Modbus/goodwe library. The DT-family constant is embedded in this integration and applied automatically. The config flow captures it during setup so other families can be supported.
+
+**Register mapping:** The Modbus data region (offsets 0x15–0xCC) is a direct sequential dump of registers 30100–30172. The offset for any register is `0x15 + (register - 30100) * 2`. This was verified by comparing real MITM captures against the goodwe library's DT register definitions — every field matches. All scaling factors (÷10 for voltage/current, ÷100 for frequency, ÷1000 for power_factor, etc.) are correctly reversed to restore raw register values for SEMS compatibility.
+
+**Firmware sentinel tail (35 bytes at 0xCD–0xEF):** The last 35 bytes of the plaintext are a constant pointer/sentinel table written by the inverter firmware, not corresponding to readable Modbus registers. **Sending zeros here causes SEMS to ACK the packet and accumulate `eDay` but silently skip updating the live display (`pac` / `last_refresh_time`).** The correct bytes are embedded in this integration.
+
+**Persistent TCP connection:** SEMS only updates the live display (`output_power` / `last_refresh_time`) while the TCP connection to `tcp.goodwe-power.com:20001` remains open. Opening a new connection per packet causes SEMS to accept packets but not refresh the live status. This integration maintains a persistent connection with automatic reconnection on EOF.
+
+**Register 30128 (ppv):** Contains the total PV DC output power (sum of vpv×ipv across all strings), not AC grid power. This is the value displayed by the official GoodWe integration as "PV Power" and matches user expectations for "current generation."
+
+**Energy plausibility check:** SEMS performs a server-side sanity check — if `e_day` in a new packet is lower than what SEMS already holds for that day, it ACKs the packet but skips the live display update. Under normal operation `e_day` only increases throughout the day, so this is not an issue. It can become apparent after testing with synthetic data from a different day.
+
+**SEMS ACK format (58 bytes, header `GW`):**
+- `[24:40]` — IV (server timestamp + 10 zeros)
+- `[40:56]` — AES-128-CBC payload: all-zeros = ACK, `0x02`+zeros = NACK
 
 ## Installation
 
-### Via HACS (Easy)
-1. Open Home Assistant → HACS
-2. Click on "Custom repositories"
-3. Add: `https://github.com/ongas/goodwe_local_SEMS_bridge`
-4. Select "Integration"
-5. Search for "GoodWe Local SEMS Bridge" and install
+### Via HACS (recommended)
+
+1. Open Home Assistant → HACS → Integrations
+2. Click the three-dot menu → **Custom repositories**
+3. Add `https://github.com/ongas/goodwe_local_SEMS_bridge`, category: **Integration**
+4. Search for **GoodWe Local SEMS Bridge** and install
+5. Restart Home Assistant
 
 ### Manual
-1. Copy the `custom_components/goodwe_local_sems_bridge` folder to your Home Assistant `custom_components` directory
-2. Restart Home Assistant
+
+Copy `custom_components/goodwe_local_sems_bridge/` into your HA `custom_components/` directory and restart Home Assistant.
 
 ## Setup
 
-1. In Home Assistant, go to **Settings → Devices & Services → Create Integration**
-2. Click **"Create Integration"** (or search for "GoodWe Local SEMS Bridge")
-3. Select your configured GoodWe integration
-4. Enter your SEMS API credentials:
-   - SEMS Username
-   - SEMS Password
-   - SEMS Station ID
-5. Choose whether to enable cloud sync:
-   - **Sync to Goodwe Cloud**: Enable/disable syncing to SEMS (default: enabled)
+1. Go to **Settings → Devices & Services → Add Integration**
+2. Search for **GoodWe Local SEMS Bridge**
+3. Enter your inverter's local IP address (port defaults to `8899`)
+4. The integration connects to the inverter, auto-detects the model and serial number, and applies the correct device header
+5. Confirm to create the entry
 
-## How It Works
+## Sensors
 
-1. **Initial Setup**: Bridge verifies SEMS credentials are valid (if cloud sync enabled)
-2. **Continuous Operation**: 
-   - Reads the latest data from your configured GoodWe modbus integration
-   - If cloud sync is enabled: Syncs data to Goodwe SEMS cloud every 60 seconds (factory default)
-   - If cloud sync is disabled: Data is only available locally
-3. **Error Handling**: If SEMS sync fails, it logs the error but continues operating
+| Sensor | Description |
+|--------|-------------|
+| Sync Status | `OK`, `Failed`, or `Pending` |
+| Last Sync | Timestamp of the last successful sync |
+| Sync Count | Number of successful syncs today (resets at midnight, survives restarts) |
 
-## Configuration
+## Debug Logging
 
-The integration is configured through the setup wizard and no additional manual configuration is needed:
-
-- **Sync to Goodwe Cloud** (default: enabled): 
-  - When enabled, data is automatically synced to SEMS every 60 seconds (factory default frequency)
-  - When disabled, no cloud sync occurs
-  - The bridge reads data from your official GoodWe integration at its configured frequency and syncs to cloud on the 60-second schedule
+```yaml
+logger:
+  logs:
+    custom_components.goodwe_local_sems_bridge: debug
+```
 
 ## Troubleshooting
 
-### SEMS sync failures in logs
-- These are non-fatal and don't affect local operation
-- The integration will keep retrying every minute
-- Check your internet connection and SEMS API status
+### SEMS live display not updating
+
+Check HA logs for `POSTGW packet sent` lines. If packets are sending but SEMS is not updating:
+
+- **Energy plausibility**: If testing earlier today injected a higher `e_day` value into SEMS, it will ignore updates until the live value naturally exceeds it. Wait it out — no fix required.
+- **Network**: Ensure outbound TCP to `tcp.goodwe-power.com:20001` is allowed through your firewall.
+- **NACK response**: Look for `SEMS returned NACK` warnings in the log. This indicates a malformed packet.
+
+### Inverter unreachable at startup
+
+If the inverter is in overnight standby (no solar generation), the integration logs a warning and retries every 60 seconds. It reconnects automatically when the inverter wakes up.
+
+### Compatibility
+
+Tested on GoodWe **DT family** (e.g. GW25K-MT). Other GoodWe families using the POSTGW protocol should work but may have different register counts or device headers. Open an issue if your model needs adjustments.
+
+## Requirements
+
+- Home Assistant 2024.1.0 or later
+- GoodWe inverter reachable on local network (port 8899)
+- Outbound TCP to `tcp.goodwe-power.com:20001`
+- Python packages: `cryptography>=41.0.0`, `goodwe>=0.3.0`
 
 ## License
 
-MIT License - See LICENSE file for details
+See [LICENSE](LICENSE)
 
 ## Contributing
 
-Contributions are welcome! Feel free to submit issues and pull requests.
+Issues and pull requests welcome: https://github.com/ongas/goodwe_local_SEMS_bridge/issues
 
-## Disclaimer
-
-This is a community-created integration. It is not officially affiliated with GoodWe.
+---
+*Not affiliated with GoodWe. Protocol details discovered through independent research.*
