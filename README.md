@@ -1,10 +1,10 @@
 # GoodWe Local SEMS Bridge
 
-A Home Assistant custom integration that reads live inverter data directly via local Modbus and relays it to the GoodWe SEMS cloud using the native POSTGW protocol — keeping your SEMS dashboard updated without relying on the inverter's WiFi module to phone home.
+A Home Assistant custom integration that reads live inverter data directly via local Modbus and relays it to the GoodWe SEMS cloud using the native POSTGW protocol — keeping your SEMS dashboard updated even when local Modbus polling starves the inverter's cloud connection.
 
 ## Why This Exists
 
-GoodWe inverters communicate with SEMS using a proprietary encrypted TCP protocol called **POSTGW**. When you use the local Modbus integration (port 8899) instead of the inverter's built-in cloud path, SEMS stops receiving updates and your dashboard goes stale.
+GoodWe inverters communicate with SEMS using a proprietary encrypted TCP protocol called **POSTGW**. The inverter maintains both its cloud connection and the local Modbus interface (port 8899) simultaneously, but its network stack cannot keep up with both under load. When a local Modbus integration polls frequently for more granular data, the inverter's limited processing effectively starves the cloud connection and your SEMS dashboard goes stale.
 
 This integration bridges the gap:
 1. Reads live sensor data directly from the inverter via Modbus
