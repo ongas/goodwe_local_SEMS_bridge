@@ -39,24 +39,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         device_serial=entry.data[CONF_DEVICE_SERIAL],
     )
 
-    # Attempt initial connection — if inverter is offline (e.g. night-time standby),
-    # log a warning and continue. The sync loop will reconnect when it wakes up.
-    if not await relay.async_connect():
-        _LOGGER.warning(
-            "Inverter at %s is unreachable at startup (offline/standby). "
-            "Will retry every 60 seconds.",
-            entry.data[CONF_INVERTER_HOST],
-        )
-    else:
-        # Attempt first sync immediately only if connected
-        await relay.async_sync()
+    hass.data[DOMAIN][entry.entry_id] = relay
 
     async def _sync_callback(now):
         await relay.async_sync()
 
-    hass.data[DOMAIN][entry.entry_id] = relay
     hass.data[DOMAIN][f"{entry.entry_id}_listener"] = async_track_time_interval(
         hass, _sync_callback, SEMS_SYNC_INTERVAL
+    )
+
+    # Run the initial connect + sync in the background so HA startup is not
+    # blocked by inverter UDP probes or the SEMS TCP handshake / 5-second ACK
+    # timeout.  The periodic timer will pick up retries regardless.
+    async def _initial_sync() -> None:
+        if not await relay.async_connect():
+            _LOGGER.warning(
+                "Inverter at %s is unreachable at startup (offline/standby). "
+                "Will retry every 60 seconds.",
+                entry.data[CONF_INVERTER_HOST],
+            )
+        else:
+            await relay.async_sync()
+
+    entry.async_create_background_task(
+        hass, _initial_sync(), "goodwe_sems_initial_sync"
     )
 
     _LOGGER.info(
