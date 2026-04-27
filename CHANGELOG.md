@@ -1,3 +1,20 @@
+# v2.4.0 - Test suite & faster startup
+
+## What's New
+- **Non-blocking startup**: Initial inverter connection and SEMS sync now run in a background task, so Home Assistant startup is no longer delayed by UDP probes or the 5-second SEMS TCP ACK timeout.
+
+## Tests
+- Added **161 tests** covering all components:
+  - `modbus_unpacker`: all data types, unpack/format, edge cases
+  - `coordinator`: CRC-16, AES encryption, POSTGW packets, plaintext construction, relay state management, SEMS TCP protocol
+  - `config_flow`: user step, confirm step, serial parsing, duplicate detection
+  - `__init__`: setup/unload entry, non-blocking startup verification
+  - `sensor`: all 4 sensor entities, attributes, restore behaviour
+  - `diagnostics`: output structure, redaction, sync status
+- Added `pyproject.toml` with test dependencies (`pytest`, `pytest-asyncio`, `pytest-homeassistant-custom-component`)
+
+---
+
 # v2.3.3 - Revert broken refactoring, restore working v2.2.10 code
 
 ## What Happened

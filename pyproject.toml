@@ -1,6 +1,6 @@
 [project]
 name = "goodwe-local-sems-bridge"
-version = "2.3.3"
+version = "2.4.0"
 description = "Home Assistant custom integration: GoodWe Local SEMS Bridge"
 requires-python = ">=3.11"
 dependencies = [
