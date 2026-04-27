@@ -1,3 +1,11 @@
+# v0.5.2 - Fix reconnect loop under UDP contention
+
+## What's New
+- **Fixed vicious reconnect loop**: v0.5.1's failure counter was never reset when forcing a reconnect, so the fresh connection's very first read failure would trigger another immediate disconnect — creating an infinite reconnect loop under contention.
+- **Raised reconnect threshold from 3 to 10**: Each reconnect adds a UDP discovery probe to an already congested bus, making contention worse. Now tolerates 10 consecutive failures (~10 minutes at 1-min sync interval, ~30 internal UDP attempts) before assuming the inverter is truly offline.
+
+---
+
 # v0.5.1 - Fix UDP contention with official GoodWe integration
 
 ## What's New
