@@ -140,6 +140,12 @@ Tested on GoodWe **DT family** (e.g. GW25K-MT). Other GoodWe families using the 
 - Outbound TCP to `tcp.goodwe-power.com:20001`
 - Python packages: `cryptography>=41.0.0`, `goodwe>=0.3.0`
 
+## Credits
+
+Protocol reverse engineering, packet structure analysis, and testing based on:
+- [smlx/goodwe-exporters](https://github.com/smlx/goodwe-exporters)
+- [smlx.dev exhaustive protocol teardown](https://smlx.dev/posts/goodwe-sems-protocol-teardown/)
+
 ## License
 
 See [LICENSE](LICENSE)
