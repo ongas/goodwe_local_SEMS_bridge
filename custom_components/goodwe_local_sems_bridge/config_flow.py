@@ -35,7 +35,6 @@ async def _connect_and_probe(
     """Connect to the inverter, read raw running-data response, return (inverter, error_key)."""
     try:
         inverter = await goodwe_connect(host, port)
-        await inverter.read_device_info()
         return inverter, None
     except InverterError:
         return None, "cannot_connect"

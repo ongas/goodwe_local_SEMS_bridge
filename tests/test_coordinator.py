@@ -407,8 +407,8 @@ class TestRelayStateManagement:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_sync_runtime_read_failure(self):
-        """Runtime data read failure resets _inverter and returns False."""
+    async def test_sync_runtime_read_failure_keeps_inverter(self):
+        """A single runtime data read failure keeps _inverter (no immediate reconnect)."""
         relay = self._make_relay()
         mock_inv = AsyncMock()
         mock_inv.read_runtime_data = AsyncMock(side_effect=Exception("timeout"))
@@ -417,7 +417,42 @@ class TestRelayStateManagement:
         result = await relay.async_sync()
 
         assert result is False
+        assert relay._inverter is mock_inv  # kept alive
+        assert relay._consecutive_read_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_sync_runtime_read_failure_reconnects_after_threshold(self):
+        """After _MAX_CONSECUTIVE_READ_FAILURES, _inverter is reset for reconnect."""
+        relay = self._make_relay()
+        mock_inv = AsyncMock()
+        mock_inv.read_runtime_data = AsyncMock(side_effect=Exception("timeout"))
+        relay._inverter = mock_inv
+        relay._consecutive_read_failures = 2  # one below threshold
+
+        result = await relay.async_sync()
+
+        assert result is False
         assert relay._inverter is None  # force reconnect
+        assert relay._consecutive_read_failures == 3
+
+    @pytest.mark.asyncio
+    async def test_sync_success_resets_consecutive_failures(self):
+        """Successful read resets the consecutive failure counter."""
+        relay = self._make_relay()
+        mock_inv = AsyncMock()
+        mock_inv.read_runtime_data = AsyncMock(return_value=_sample_runtime_data())
+        relay._inverter = mock_inv
+        relay._consecutive_read_failures = 2  # had previous failures
+
+        with (
+            patch.object(relay, "_send_to_sems", return_value=True),
+            patch("custom_components.goodwe_local_sems_bridge.coordinator.dt_util") as mock_dt,
+        ):
+            mock_dt.now.return_value = datetime(2024, 6, 15, 14, 0, 0)
+            result = await relay.async_sync()
+
+        assert result is True
+        assert relay._consecutive_read_failures == 0
 
     @pytest.mark.asyncio
     async def test_sync_sems_send_failure(self):
@@ -437,6 +472,7 @@ class TestRelayStateManagement:
         assert result is False
         assert relay._sems_sync_failed is True
         assert relay._last_error == "SEMS rejected packet (NACK)"
+        assert relay._inverter is mock_inv  # inverter kept alive on SEMS failure
 
     @pytest.mark.asyncio
     async def test_sync_success_updates_state(self):
@@ -492,6 +528,24 @@ class TestRelayStateManagement:
         assert status["last_sync"] == relay._last_sems_sync
         assert status["failed"] is True
         assert status["last_error"] == "test error"
+
+    @pytest.mark.asyncio
+    async def test_sync_outer_exception_preserves_inverter(self):
+        """Unexpected exceptions during SEMS send preserve the inverter object."""
+        relay = self._make_relay()
+        mock_inv = AsyncMock()
+        mock_inv.read_runtime_data = AsyncMock(return_value=_sample_runtime_data())
+        relay._inverter = mock_inv
+
+        with (
+            patch.object(relay, "_send_to_sems", side_effect=RuntimeError("boom")),
+            patch("custom_components.goodwe_local_sems_bridge.coordinator.dt_util") as mock_dt,
+        ):
+            mock_dt.now.return_value = datetime(2024, 6, 15, 14, 0, 0)
+            result = await relay.async_sync()
+
+        assert result is False
+        assert relay._inverter is mock_inv  # preserved
 
 
 # ── _send_to_sems protocol tests ─────────────────────────────────────────────
