@@ -1,3 +1,12 @@
+# v0.5.1 - Fix UDP contention with official GoodWe integration
+
+## What's New
+- **Resilient inverter connection**: The inverter object is now kept alive across transient read failures instead of forcing an expensive full reconnect (4+ UDP calls) on every failure. Only resets after 3 consecutive failures. This dramatically reduces UDP contention when the official GoodWe integration is polling the same inverter at 500ms intervals.
+- **SEMS failures no longer reset the inverter**: TCP/SEMS-side errors (send failure, NACK) no longer discard the UDP inverter connection.
+- **Config flow fix**: Removed redundant `read_device_info()` call during setup.
+
+---
+
 # v0.5.0 - Test suite & faster startup
 
 ## What's New
