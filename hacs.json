@@ -1,9 +1,5 @@
 {
   "name": "GoodWe Local SEMS Bridge",
-  "documentation": "https://github.com/ongas/goodwe_local_SEMS_bridge/blob/main/README.md",
-  "issues": "https://github.com/ongas/goodwe_local_SEMS_bridge/issues",
   "homeassistant": "2024.1.0",
-  "codeowners": ["@ongas"],
-  "requirements": [],
   "render_readme": true
 }
