@@ -427,13 +427,13 @@ class TestRelayStateManagement:
         mock_inv = AsyncMock()
         mock_inv.read_runtime_data = AsyncMock(side_effect=Exception("timeout"))
         relay._inverter = mock_inv
-        relay._consecutive_read_failures = 2  # one below threshold
+        relay._consecutive_read_failures = 9  # one below threshold (10)
 
         result = await relay.async_sync()
 
         assert result is False
         assert relay._inverter is None  # force reconnect
-        assert relay._consecutive_read_failures == 3
+        assert relay._consecutive_read_failures == 0  # reset for fresh connection
 
     @pytest.mark.asyncio
     async def test_sync_success_resets_consecutive_failures(self):

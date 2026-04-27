@@ -32,7 +32,10 @@ _LOGGER = logging.getLogger(__name__)
 # Number of consecutive read_runtime_data failures before forcing a full
 # goodwe_connect() reconnect.  Keeps the inverter object alive through
 # transient UDP contention (e.g. official GoodWe integration polling at 500 ms).
-_MAX_CONSECUTIVE_READ_FAILURES = 3
+# At a 1-minute sync interval, 10 failures = 10 minutes of total outage before
+# we assume the inverter is truly offline (not just contention).  The goodwe
+# library already retries 3× per call, so 10 failures = ~30 UDP attempts.
+_MAX_CONSECUTIVE_READ_FAILURES = 10
 
 # ── POSTGW protocol constants ────────────────────────────────────────────────
 
@@ -213,6 +216,7 @@ class GoodweLocalSemsRelay:
                         self._consecutive_read_failures,
                     )
                     self._inverter = None
+                    self._consecutive_read_failures = 0  # reset for fresh connection
                 self._sems_sync_failed = True
                 self._last_error = f"Inverter read failed: {ex}"
                 return False
