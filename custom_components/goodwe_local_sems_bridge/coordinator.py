@@ -29,14 +29,6 @@ from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
-# Number of consecutive read_runtime_data failures before forcing a full
-# goodwe_connect() reconnect.  Keeps the inverter object alive through
-# transient UDP contention (e.g. official GoodWe integration polling at 500 ms).
-# At a 1-minute sync interval, 10 failures = 10 minutes of total outage before
-# we assume the inverter is truly offline (not just contention).  The goodwe
-# library already retries 3× per call, so 10 failures = ~30 UDP attempts.
-_MAX_CONSECUTIVE_READ_FAILURES = 10
-
 # ── POSTGW protocol constants ────────────────────────────────────────────────
 
 SEMS_CLOUD_HOST = "tcp.goodwe-power.com"
@@ -150,7 +142,6 @@ class GoodweLocalSemsRelay:
         self._device_serial = device_serial
 
         self._inverter: Inverter | None = None
-        self._consecutive_read_failures: int = 0
         self._last_sems_sync: datetime | None = None
         self._sems_sync_failed: bool = False
         self._last_error: str | None = None
@@ -200,23 +191,9 @@ class GoodweLocalSemsRelay:
             # ── Step 1: Read decoded register values from inverter ────────────
             try:
                 self.last_runtime_data = await self._inverter.read_runtime_data()
-                self._consecutive_read_failures = 0
             except Exception as ex:  # pylint: disable=broad-except
-                self._consecutive_read_failures += 1
-                _LOGGER.warning(
-                    "Failed to read inverter runtime data (%d/%d): %s",
-                    self._consecutive_read_failures,
-                    _MAX_CONSECUTIVE_READ_FAILURES,
-                    ex,
-                )
-                if self._consecutive_read_failures >= _MAX_CONSECUTIVE_READ_FAILURES:
-                    _LOGGER.error(
-                        "Inverter unreachable after %d consecutive failures — "
-                        "forcing full reconnect next cycle",
-                        self._consecutive_read_failures,
-                    )
-                    self._inverter = None
-                    self._consecutive_read_failures = 0  # reset for fresh connection
+                _LOGGER.error("Failed to read inverter runtime data: %s", ex)
+                self._inverter = None  # Force reconnect next cycle
                 self._sems_sync_failed = True
                 self._last_error = f"Inverter read failed: {ex}"
                 return False

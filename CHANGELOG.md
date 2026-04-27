@@ -1,3 +1,11 @@
+# v0.5.3 - Revert to reliable reconnect-on-failure behaviour
+
+## What's New
+- **Reverted read failure handling to original proven behaviour**: The v0.5.1/v0.5.2 approach of keeping the inverter object alive across read failures caused persistent connection degradation. The `goodwe_connect()` call creates a fresh UDP socket which is essential for recovery under contention. Restored the original "reconnect every cycle after a failure" strategy that reliably delivered data every minute.
+- **Kept v0.5.1 improvement**: SEMS TCP/send errors still do NOT reset the inverter connection (only read failures do).
+
+---
+
 # v0.5.2 - Fix reconnect loop under UDP contention
 
 ## What's New
